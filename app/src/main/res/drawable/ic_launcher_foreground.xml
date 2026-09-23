@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Balance ring: open at the top, like a budget that can still be filled. -->
+    <path
+        android:pathData="M54,30a24,24 0,1 1,-17 7"
+        android:strokeWidth="7"
+        android:strokeColor="#FF7CE0B6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+    <!-- Flame in the middle: the burn side of the balance. -->
+    <path
+        android:pathData="M54,44c5,5 8,9 8,13a8,8 0,0 1,-16 0c0,-4 3,-8 8,-13z"
+        android:fillColor="#FFF2B33D" />
+</vector>

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Kcal Balance</string>
+    <string name="widget_description">Today\'s intake, estimated burn and how much is left.</string>
+</resources>
