@@ -295,23 +295,32 @@ class HistoryRepository(
         results.filterNotNull().fold(emptyMap()) { acc, part -> acc + part }
     }
 
-    /**
-     * How far ahead or behind the goal the past week ran.
-     *
-     * Only days with logged food count. A day with no nutrition record looks like a
-     * whole-day fast, which would hand today an enormous and entirely fictional credit.
-     */
-    private fun bankedAdjustment(rows: List<DayRow>, settings: AppSettings): Double {
-        val delta = settings.goal.dailyEnergyDelta
-        val recent = rows.takeLast(BANKING_DAYS).filter { it.intakeKcal != null && it.burnKcal != null }
-        if (recent.isEmpty()) return 0.0
-        val carried = recent.sumOf { row ->
-            (row.burnKcal!! + delta) - row.intakeKcal!!
-        }
-        return carried.coerceIn(-MAX_BANKED_KCAL, MAX_BANKED_KCAL)
-    }
-
     companion object {
+        /**
+         * How far ahead or behind the goal the past week ran.
+         *
+         * Calibrated, because this lands straight in today's budget: carrying a raw figure
+         * into a corrected budget mixes two scales and quietly biases the whole week.
+         *
+         * Only days with logged food count. A day with no nutrition record looks like a
+         * whole-day fast, which would hand today an enormous and entirely fictional credit.
+         */
+        internal fun bankedAdjustment(rows: List<DayRow>, settings: AppSettings): Double {
+            val calibrating = settings.features.autoCalibration
+            val burnFactor = if (calibrating) settings.calibration.expenditureFactor else 1.0
+            val intakeFactor = if (calibrating) settings.calibration.intakeFactor else 1.0
+            val delta = settings.goal.dailyEnergyDelta
+
+            val recent = rows.takeLast(BANKING_DAYS)
+                .filter { it.intakeKcal != null && it.burnKcal != null }
+            if (recent.isEmpty()) return 0.0
+
+            val carried = recent.sumOf { row ->
+                (row.burnKcal!! * burnFactor + delta) - row.intakeKcal!! * intakeFactor
+            }
+            return carried.coerceIn(-MAX_BANKED_KCAL, MAX_BANKED_KCAL)
+        }
+
         const val DEFAULT_DAYS = 90
         const val BANKING_DAYS = 6
 

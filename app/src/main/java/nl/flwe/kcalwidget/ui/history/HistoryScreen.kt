@@ -4,6 +4,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -15,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -29,6 +32,7 @@ import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.components.StatRow
 import nl.flwe.kcalwidget.ui.settings.SettingsScaffold
+import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -80,7 +84,11 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         item { ExportCard(history) }
         item {
             SectionCard("Days") {
-                Explainer("Newest first. Net is intake minus burn, so negative is a deficit.")
+                Explainer(
+                    "Newest first. Net is intake minus burn, so negative is a deficit. " +
+                        "These are the figures your apps recorded, before any calibration " +
+                        "correction, which is why they can differ from today's budget."
+                )
             }
         }
         val recent = history.rows.reversed().take(60)
@@ -119,30 +127,65 @@ private fun NetChartCard(history: History) {
             return@SectionCard
         }
         val maxMagnitude = nets.filterNotNull().maxOfOrNull { abs(it) }?.coerceAtLeast(1.0) ?: 1.0
-        Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
-            val slot = size.width / nets.size
-            val midY = size.height / 2
-            drawLine(
-                color = Color.Gray,
-                start = Offset(0f, midY),
-                end = Offset(size.width, midY),
-                strokeWidth = 1f,
-            )
-            nets.forEachIndexed { index, net ->
-                if (net == null) return@forEachIndexed
-                val height = (abs(net) / maxMagnitude * (midY * 0.9)).toFloat()
-                val left = index * slot + slot * 0.2f
-                val width = slot * 0.6f
-                // Above the line is a surplus, below is a deficit.
-                val top = if (net > 0) midY - height else midY
-                drawRect(
-                    color = if (net > 0) OVER else UNDER,
-                    topLeft = Offset(left, top),
-                    size = androidx.compose.ui.geometry.Size(width, height),
+        val bound = maxMagnitude.roundToInt()
+        VerticalAxis(top = "+$bound", bottom = "-$bound") {
+            Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
+                val slot = size.width / nets.size
+                val midY = size.height / 2
+                drawLine(
+                    color = Color.Gray,
+                    start = Offset(0f, midY),
+                    end = Offset(size.width, midY),
+                    strokeWidth = 1f,
                 )
+                nets.forEachIndexed { index, net ->
+                    if (net == null) return@forEachIndexed
+                    val height = (abs(net) / maxMagnitude * (midY * 0.9)).toFloat()
+                    val left = index * slot + slot * 0.2f
+                    val width = slot * 0.6f
+                    // Above the line is a surplus, below is a deficit.
+                    val top = if (net > 0) midY - height else midY
+                    drawRect(
+                        color = if (net > 0) OVER else UNDER,
+                        topLeft = Offset(left, top),
+                        size = androidx.compose.ui.geometry.Size(width, height),
+                    )
+                }
             }
         }
+        history.rows.takeLast(30).let { shown ->
+            if (shown.size >= 2) DateAxis(shown.first().date, shown.last().date)
+        }
         Explainer("Green below the line is a deficit; red above it is a surplus.")
+    }
+}
+
+/**
+ * Labels the vertical range of a chart: highest value at the top, lowest at the bottom,
+ * beside the plot rather than under it. A min and a max laid out left to right under a
+ * time series reads as "then" and "now", which is the one thing they are not.
+ */
+@Composable
+private fun VerticalAxis(top: String, bottom: String, chart: @Composable () -> Unit) {
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Column(
+            modifier = Modifier.padding(end = 8.dp),
+            verticalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(top, style = MaterialTheme.typography.bodySmall)
+            Spacer(modifier = Modifier.height(72.dp))
+            Text(bottom, style = MaterialTheme.typography.bodySmall)
+        }
+        Box(modifier = Modifier.weight(1f)) { chart() }
+    }
+}
+
+/** Oldest on the left, newest on the right, which is the direction the chart is drawn. */
+@Composable
+private fun DateAxis(first: LocalDate, last: LocalDate) {
+    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(DAY_LABEL.format(first), style = MaterialTheme.typography.bodySmall)
+        Text(DAY_LABEL.format(last), style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -162,33 +205,35 @@ private fun WeightChartCard(history: History) {
         val lastDay = points.last().date.toEpochDay()
         val daySpan = (lastDay - firstDay).coerceAtLeast(1)
 
-        Canvas(modifier = Modifier.fillMaxWidth().height(140.dp)) {
-            fun x(day: Long) = ((day - firstDay).toFloat() / daySpan) * size.width
-            fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.9f +
-                size.height * 0.05f
+        // The kg bounds go beside the chart, heaviest at the top, because that is the axis
+        // they describe. Along the bottom they read as a start and an end, which is the
+        // opposite of what they mean.
+        VerticalAxis(top = "%.1f kg".format(max), bottom = "%.1f kg".format(min)) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(140.dp)) {
+                fun x(day: Long) = ((day - firstDay).toFloat() / daySpan) * size.width
+                fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.9f +
+                    size.height * 0.05f
 
-            points.forEach { point ->
-                drawCircle(
-                    color = Color.Gray,
-                    radius = 3f,
-                    center = Offset(x(point.date.toEpochDay()), y(point.rawKg)),
-                )
-            }
-            for (i in 0 until points.size - 1) {
-                val a = points[i]
-                val b = points[i + 1]
-                drawLine(
-                    color = TREND,
-                    start = Offset(x(a.date.toEpochDay()), y(a.trendKg)),
-                    end = Offset(x(b.date.toEpochDay()), y(b.trendKg)),
-                    strokeWidth = 4f,
-                )
+                points.forEach { point ->
+                    drawCircle(
+                        color = Color.Gray,
+                        radius = 3f,
+                        center = Offset(x(point.date.toEpochDay()), y(point.rawKg)),
+                    )
+                }
+                for (i in 0 until points.size - 1) {
+                    val a = points[i]
+                    val b = points[i + 1]
+                    drawLine(
+                        color = TREND,
+                        start = Offset(x(a.date.toEpochDay()), y(a.trendKg)),
+                        end = Offset(x(b.date.toEpochDay()), y(b.trendKg)),
+                        strokeWidth = 4f,
+                    )
+                }
             }
         }
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("%.1f kg".format(min), style = MaterialTheme.typography.bodySmall)
-            Text("%.1f kg".format(max), style = MaterialTheme.typography.bodySmall)
-        }
+        DateAxis(points.first().date, points.last().date)
         Explainer("Grey dots are what the scale said; the line is the smoothed trend.")
     }
 }
