@@ -272,3 +272,9 @@ that choice, not an oversight.
   that is close enough; over a few days it is not, which is what the gating is for.
 
 Not medical advice, and not a substitute for it.
+
+---
+
+## License
+
+MIT. See [LICENSE](LICENSE).
