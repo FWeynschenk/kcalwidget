@@ -154,10 +154,87 @@ class EnergeticsTest {
     }
 
     @Test
-    fun `a busy morning pulls the projection above the typical day`() {
-        // 1800 kcal by midday implies a 3600 day; blended half and half with 2600.
+    fun `a busy morning is not projected forward`() {
+        // 1800 by midday against 1300 expected is 500 ahead, but that buys nothing in
+        // advance. The floor governs: 1800 burned plus resting for the rest of the day.
         val result = Energetics.compute(snapshot(total = 1800.0), settings, halfDay, flatBaseline)
-        assertEquals(3100.0, result.projectedBurnKcal, 0.001)
+        assertEquals(500.0, result.surplusVsTypicalKcal, 0.001)
+        assertEquals(1800.0 + bmr * 0.5, result.projectedBurnKcal, 0.001)
+    }
+
+    @Test
+    fun `a moderate walk does not move the projection at all`() {
+        // The afternoon walk problem, in one assertion.
+        val ordinary = Energetics.compute(snapshot(total = 1300.0), settings, halfDay, flatBaseline)
+        val afterWalk = Energetics.compute(snapshot(total = 1600.0), settings, halfDay, flatBaseline)
+        assertEquals(ordinary.projectedBurnKcal, afterWalk.projectedBurnKcal, 0.001)
+    }
+
+    @Test
+    fun `a big day is still credited, through the floor rather than a guess`() {
+        val ordinary = Energetics.compute(snapshot(total = 1300.0), settings, halfDay, flatBaseline)
+        val afterHike = Energetics.compute(snapshot(total = 2800.0), settings, halfDay, flatBaseline)
+        assertTrue(afterHike.projectedBurnKcal > ordinary.projectedBurnKcal)
+        assertEquals(2800.0 + bmr * 0.5, afterHike.projectedBurnKcal, 0.001)
+    }
+
+    @Test
+    fun `an active day earns room through the evening instead of losing it`() {
+        // Walk at midday and a normal evening after it: the projection should climb.
+        val readings = (12..23).map { hour ->
+            val evening = 2600.0 * ((hour - 12) / 24.0)
+            Energetics.compute(
+                snapshot(total = 1600.0 + evening),
+                settings,
+                Duration.ofHours(hour.toLong()),
+                flatBaseline,
+            ).projectedBurnKcal
+        }
+        assertEquals(readings.sorted(), readings)
+    }
+
+    @Test
+    fun `a walk followed by a quiet evening does not collapse the budget`() {
+        // Midday walk of 300, then nothing but resting burn until 22:00.
+        val atWalk = Energetics.compute(snapshot(total = 1600.0), settings, halfDay, flatBaseline)
+        val restingSince = bmr * (10.0 / 24.0)
+        val evening = Energetics.compute(
+            snapshot(total = 1600.0 + restingSince),
+            settings,
+            Duration.ofHours(22),
+            flatBaseline,
+        )
+
+        val drop = atWalk.projectedBurnKcal - evening.projectedBurnKcal
+        // All that remains is the day genuinely ending below a typical one. The walk itself
+        // contributes nothing to the fall, because it was never promised.
+        assertTrue("the budget must not visibly collapse, fell by $drop", drop < 100.0)
+        assertTrue("and the projection should still end sane", evening.projectedBurnKcal > bmr)
+    }
+
+    @Test
+    fun `falling behind is taken at face value straight away`() {
+        // Under-promising can be handed back later; over-promising has already been eaten.
+        val result = Energetics.compute(snapshot(total = 900.0), settings, halfDay, flatBaseline)
+        assertEquals(-400.0, result.surplusVsTypicalKcal, 0.001)
+        assertEquals(2200.0, result.projectedBurnKcal, 0.001)
+    }
+
+    @Test
+    fun `the projection is steadier through the day than full credit would be`() {
+        // Walk at midday, resting afterwards, sampled hourly. The swing in the projection
+        // is what the user actually experiences as the budget moving under them.
+        val readings = (12..23).map { hour ->
+            val resting = bmr * ((hour - 12) / 24.0)
+            Energetics.compute(
+                snapshot(total = 1600.0 + resting),
+                settings,
+                Duration.ofHours(hour.toLong()),
+                flatBaseline,
+            ).projectedBurnKcal
+        }
+        val swing = readings.max() - readings.min()
+        assertTrue("projection swung by $swing kcal over the afternoon", swing < 100.0)
     }
 
     @Test

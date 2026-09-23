@@ -41,22 +41,43 @@ Crediting the rest of the day with bare resting burn makes the morning budget fa
 tight — almost every real day ends well above BMR. Extrapolating by clock time is no
 better, because the hours before waking cost a fraction of an afternoon hour.
 
-So the estimate starts at your own typical full day and hands weight over to today's data
-as the day is actually observed:
+So the estimate starts at your own typical full day, and moves from there:
 
 ```
 f        share of a normal day's burn usually done by now   (learned intraday curve)
-implied  burnedSoFar / f                                    (what today's pace implies)
-blended  f × implied + (1 − f) × typicalDay
+surplus  burnedSoFar − f × typicalDay                       (how far ahead today is)
+estimate typicalDay + min(surplus, 0)
 floor    burnedSoFar + BMR/day × (1 − dayFraction)          (rest of today at rest)
 
-projectedBurn = max(blended, floor)
+projectedBurn = max(estimate, floor)
 ```
 
-At the start of the day `f` is 0 and the estimate is simply your typical day. By evening
-`f` approaches 1 and it converges on what actually happened. `implied` is clamped to
-0.6–1.8× typical so one odd hour cannot run away with it, and the floor means an
-exceptional day still outranks the clamp.
+**The asymmetry is the whole design.** Running behind is believed immediately: a budget
+that turns out too small can be handed back, while one that turns out too large has already
+been eaten. Running ahead is not projected forward at all.
+
+That second half is counter-intuitive but load-bearing. An afternoon walk is no promise the
+day ends that much higher — the usual evening often does not happen, because the walk stood
+in for it. Crediting it forward makes the budget spike and then bleed away for hours, which
+is the worst possible shape. Nothing is lost by refusing to guess, because the floor already
+carries the upside: as real activity accrues, "what is burned plus resting for the rest of
+the day" rises on its own and overtakes the typical day exactly when the activity is large
+enough to be certain of. A big day is still credited in full, just as it happens rather than
+in advance, so the budget grows through the evening instead of shrinking.
+
+A 300 kcal walk at midday followed by a quiet evening, projected hourly:
+
+| crediting the surplus | at the walk | at 23:00 | swing |
+|---|---|---|---|
+| in full | 2900 | 2524 | 376 |
+| weighted by `f` | 2750 | 2527 | 223 |
+| not at all (current) | 2600 | 2524 | **76** |
+
+All three land in the same place, because all three must. The remaining 76 is the day
+genuinely ending below a typical one; everything above that was a promise being taken back.
+
+Both branches converge on the truth: by the end of the day the floor is exactly what was
+burned, and a shortfall against the typical day has been subtracted in full.
 
 **The typical day is learned**, not assumed: `TdeeBaseline` takes the mean and the
 cumulative *shape* of the last 14 complete days of `TotalCaloriesBurned`, normalising each

@@ -37,6 +37,8 @@ data class DayEnergy(
     val typicalDayKcal: Double,
     /** How much of the projection is today's own data rather than the typical day, 0..1. */
     val confidence: Double,
+    /** How far ahead of a typical day this one is running, in kcal. Negative is behind. */
+    val surplusVsTypicalKcal: Double,
     /** Days of history behind [typicalDayKcal]; 0 means the fallback, not learned. */
     val baselineDays: Int,
     /** What the goal allows eating today, never below the configured intake floor. */
@@ -79,13 +81,6 @@ object Energetics {
     /** Rough net kcal per step when nothing better than a step count is available. */
     private const val KCAL_PER_STEP_PER_KG = 0.00045
 
-    /** Below this share of the day, dividing by it amplifies noise beyond any use. */
-    private const val MIN_OBSERVED_FRACTION = 0.05
-
-    /** How far today is allowed to disagree with the typical day, as a multiple of it. */
-    private const val IMPLIED_FLOOR_FACTOR = 0.6
-    private const val IMPLIED_CEILING_FACTOR = 1.8
-
     /** Mifflin-St Jeor resting metabolic rate, kcal per day. */
     fun bmrMifflinStJeor(body: BodyProfile, weightKg: Double): Double {
         val base = 10.0 * weightKg + 6.25 * body.heightCm - 5.0 * body.age
@@ -100,18 +95,22 @@ object Energetics {
     /**
      * Combines the raw Health Connect reads with the settings into a day picture.
      *
-     * The projection starts the day at the person's typical full-day burn rather than at
-     * bare resting rate, then hands weight over to today's own data as the day is observed:
+     * The projection starts the day at the person's typical full-day burn and adjusts by
+     * how far today is running ahead of or behind that:
      *
      *   f        share of a normal day's burn that is normally done by now (learned curve)
-     *   implied  burnedSoFar / f, i.e. what today's pace says the whole day will be
-     *   blended  f-weighted mix of implied and the typical day
+     *   surplus  burnedSoFar - f x typicalDay, i.e. how far ahead today is
+     *   estimate typicalDay + min(surplus, 0)
+     *   floor    burnedSoFar + BMR x (rest of the day)
      *
-     * At the start of the day f is 0 and the estimate is simply the typical day; by late
-     * evening f approaches 1 and the estimate converges on what actually happened.
-     * `implied` is clamped so one odd hour cannot run away with it, and the whole thing is
-     * floored at "the rest of today spent at rest" so the projection can never fall below
-     * what is already certain.
+     * The asymmetry is the point. Running behind is believed at once, because a budget
+     * that turns out too small can be handed back, while one that turns out too large has
+     * already been eaten. Running ahead is not projected forward at all; the floor picks
+     * it up as it actually accrues, so an active day earns room through the evening rather
+     * than being promised it at lunchtime and losing it by dinner.
+     *
+     * Both branches converge on the truth: at the end of the day the floor is exactly what
+     * was burned, and a shortfall against the typical day has been subtracted in full.
      */
     fun compute(
         snapshot: HealthSnapshot,
@@ -159,20 +158,29 @@ object Energetics {
         val typicalDay = effectiveBaseline.meanFullDayKcal
         val observedFraction = effectiveBaseline.expectedFractionAt(elapsedToday.seconds / 3600.0)
 
-        val implied = if (observedFraction >= MIN_OBSERVED_FRACTION) {
-            burnedSoFar / observedFraction
-        } else {
-            typicalDay
-        }
-        val impliedClamped = implied.coerceIn(
-            typicalDay * IMPLIED_FLOOR_FACTOR,
-            typicalDay * IMPLIED_CEILING_FACTOR,
-        )
-        val blended = observedFraction * impliedClamped + (1.0 - observedFraction) * typicalDay
+        // How far ahead of, or behind, a normal day this one is running.
+        val expectedByNow = typicalDay * observedFraction
+        val surplus = burnedSoFar - expectedByNow
+
+        // Being ahead is not projected forward at all. Being behind is, immediately.
+        //
+        // An afternoon walk is no promise that the day ends that much higher: the usual
+        // evening often does not happen, because the walk stood in for it. Crediting it
+        // forward makes the budget spike and then bleed away for hours, which is the worst
+        // possible shape -- the room is eaten before the projection quietly takes it back.
+        //
+        // Nothing is lost by refusing to guess, because the floor below already carries
+        // the upside: as real activity accumulates, "what is burned plus resting for the
+        // rest of the day" rises on its own and overtakes the typical day exactly when the
+        // activity is large enough to be certain of. A genuinely big day is still credited
+        // in full, just as it happens rather than in advance, so the budget grows through
+        // the evening instead of shrinking.
+        val creditedSurplus = minOf(surplus, 0.0)
+        val estimate = typicalDay + creditedSurplus
 
         // Whatever the model says, the rest of today cannot burn less than resting.
         val restOfDayFloor = burnedSoFar + bmrPerDay * (1.0 - dayFraction)
-        val modelledBurn = maxOf(blended, restOfDayFloor)
+        val modelledBurn = maxOf(estimate, restOfDayFloor)
 
         // Calibration says the inputs themselves are biased, so it scales the projection
         // rather than being fenced in by it. `burnedSoFar` is left alone: it is what the
@@ -206,6 +214,7 @@ object Energetics {
             bmrPerDayKcal = bmrPerDay,
             typicalDayKcal = typicalDay,
             confidence = observedFraction,
+            surplusVsTypicalKcal = surplus,
             baselineDays = effectiveBaseline.sampleDays,
             budgetKcal = budget,
             bankedAdjustmentKcal = banked,

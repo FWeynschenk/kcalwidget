@@ -218,13 +218,20 @@ private fun TodayCard(energy: DayEnergy?) {
             value = "${energy.typicalDayKcal.roundToInt()} kcal",
         )
         StatRow("Today's data weight", "${(energy.confidence * 100).roundToInt()}%")
+        StatRow(
+            label = "Against a typical day",
+            value = "${if (energy.surplusVsTypicalKcal >= 0) "+" else ""}" +
+                "${energy.surplusVsTypicalKcal.roundToInt()} kcal so far",
+        )
         StatRow("Weight used", "${"%.1f".format(energy.weightKg)} kg")
         StatRow("Burn source", energy.source.describe())
         Spacer(Modifier.height(8.dp))
         Explainer(
             if (energy.baselineDays > 0) {
-                "The projection starts from your typical day and hands weight over to " +
-                    "today's own burn as the day goes on."
+                "The projection starts from your typical day. Falling behind lowers it " +
+                    "straight away; getting ahead is not counted in advance, so a walk " +
+                    "earns you room as you do it rather than promising room it might take " +
+                    "back later."
             } else {
                 "Not enough history yet, so the typical day is estimated from your resting " +
                     "rate. It will be learned from your own days once a few have been logged."
