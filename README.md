@@ -138,8 +138,12 @@ the answer re-splits the blame.
 
 Corrections are multiplicative, capped at 20%, and eased in 25% of the gap per recheck, so a
 budget never jumps on one fortnight's data. The check runs daily in the background.
-`burnedSoFar` is never rewritten — it is what the tracker reported, and overwriting it would
-hide the disagreement rather than surface it.
+The correction is applied to the model's **inputs** — the typical day, the resting rate,
+the burn so far — rather than to the finished projection. Both give the same number, but
+scaling only the answer leaves every figure behind it sitting on the tracker's uncorrected
+scale, so the Today card ends up quietly contradicting itself. The one exception is the
+displayed "burn so far", which stays exactly as the tracker reported: rewriting it would
+hide the very disagreement calibration exists to surface.
 
 The Calibration screen draws both curves: what the calories say your weight should have
 done, anchored to where you actually were, against the smoothed weight itself. They start

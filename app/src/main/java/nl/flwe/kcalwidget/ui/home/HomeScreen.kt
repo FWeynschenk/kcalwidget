@@ -205,7 +205,10 @@ private fun TodayCard(energy: DayEnergy?) {
         } else {
             StatRow("Eaten", "${energy.intakeKcal.roundToInt()} kcal")
         }
-        StatRow("Burned so far", "${energy.burnedSoFarKcal.roundToInt()} kcal")
+        StatRow(
+            label = if (energy.calibrationApplied) "Burned so far (as tracked)" else "Burned so far",
+            value = "${energy.burnedSoFarKcal.roundToInt()} kcal",
+        )
         StatRow("Projected by midnight", "${energy.projectedBurnKcal.roundToInt()} kcal")
         StatRow("Budget", "${energy.budgetKcal.roundToInt()} kcal")
         StatRow("Resting rate", "${energy.bmrPerDayKcal.roundToInt()} kcal/day")
@@ -240,8 +243,10 @@ private fun TodayCard(energy: DayEnergy?) {
         if (energy.calibrationApplied) {
             Spacer(Modifier.height(8.dp))
             Explainer(
-                "Calibration is on: burn and intake are corrected by what your weight trend " +
-                    "says they really are."
+                "Calibration is on, so the typical day, projection, resting rate and budget " +
+                    "are corrected by what your weight trend says your numbers really are. " +
+                    "Burn so far and intake as logged are shown untouched, so you can still " +
+                    "see what your apps reported."
             )
         }
         if (energy.intakeFloorApplied) {

@@ -454,6 +454,45 @@ class EnergeticsTest {
     }
 
     @Test
+    fun `calibration corrects the typical day, not just the answer`() {
+        // The typical day is a modelled figure, so it has to sit on the same scale as the
+        // projection derived from it. Showing the tracker's uncorrected mean next to a
+        // corrected projection makes the card contradict itself.
+        val calibrated = settings.copy(
+            features = FeatureFlags(autoCalibration = true),
+            calibration = CalibrationState(expenditureFactor = 0.9),
+        )
+        val result = Energetics.compute(
+            snapshot(total = 1400.0),
+            calibrated,
+            halfDay,
+            flatBaseline,
+        )
+        assertEquals(flatBaseline.meanFullDayKcal * 0.9, result.typicalDayKcal, 0.001)
+        assertEquals(bmr * 0.9, result.bmrPerDayKcal, 0.001)
+        // What the tracker reported is still reported.
+        assertEquals(1400.0, result.burnedSoFarKcal, 0.001)
+    }
+
+    @Test
+    fun `moving calibration to the inputs leaves the projection unchanged`() {
+        // Scaling every input is arithmetically the same as scaling the result, so this
+        // refactor must not move the number anyone is eating against.
+        val calibrated = settings.copy(
+            features = FeatureFlags(autoCalibration = true),
+            calibration = CalibrationState(expenditureFactor = 0.9),
+        )
+        val plain = Energetics.compute(snapshot(total = 1400.0), settings, halfDay, flatBaseline)
+        val corrected = Energetics.compute(
+            snapshot(total = 1400.0),
+            calibrated,
+            halfDay,
+            flatBaseline,
+        )
+        assertEquals(plain.projectedBurnKcal * 0.9, corrected.projectedBurnKcal, 0.001)
+    }
+
+    @Test
     fun `a gaining goal raises the budget above the burn`() {
         val gaining = settings.copy(goal = settings.goal.copy(weeklyChangeKg = 0.25))
         val result = Energetics.compute(snapshot(total = 1400.0), gaining, halfDay, flatBaseline)

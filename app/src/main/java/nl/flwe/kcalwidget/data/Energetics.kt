@@ -28,12 +28,16 @@ data class DayEnergy(
     val intakeKcal: Double,
     /** Intake exactly as Health Connect reported it, before calibration. */
     val rawIntakeKcal: Double,
-    /** Burn accumulated between the start of the logical day and [updatedAt]. */
+    /**
+     * Burn accumulated since the start of the logical day, exactly as reported. This one
+     * is deliberately never corrected: it is what the tracker said, and rewriting it would
+     * hide the very disagreement calibration exists to surface.
+     */
     val burnedSoFarKcal: Double,
     /** Best estimate of what the whole day will come to. */
     val projectedBurnKcal: Double,
     val bmrPerDayKcal: Double,
-    /** The typical-day figure the projection starts from before today's data outweighs it. */
+    /** The typical-day figure the projection starts from, calibrated when that is on. */
     val typicalDayKcal: Double,
     /** How much of the projection is today's own data rather than the typical day, 0..1. */
     val confidence: Double,
@@ -155,12 +159,23 @@ object Energetics {
 
         val effectiveBaseline = baseline
             ?: TdeeBaseline.fallback(bmrPerDay, settings.calculation.dayStartHour)
-        val typicalDay = effectiveBaseline.meanFullDayKcal
         val observedFraction = effectiveBaseline.expectedFractionAt(elapsedToday.seconds / 3600.0)
+
+        // Calibration says the expenditure numbers themselves read high, so it is applied
+        // to the inputs rather than to the answer. Scaling the result alone gives the same
+        // projection but leaves every figure behind it -- the typical day, the surplus,
+        // the resting rate -- sitting on the tracker's uncorrected scale, which makes the
+        // Today card quietly self-contradictory.
+        val calibrating = settings.features.autoCalibration
+        val burnFactor = if (calibrating) settings.calibration.expenditureFactor else 1.0
+
+        val typicalDay = effectiveBaseline.meanFullDayKcal * burnFactor
+        val correctedBurnedSoFar = burnedSoFar * burnFactor
+        val correctedBmrPerDay = bmrPerDay * burnFactor
 
         // How far ahead of, or behind, a normal day this one is running.
         val expectedByNow = typicalDay * observedFraction
-        val surplus = burnedSoFar - expectedByNow
+        val surplus = correctedBurnedSoFar - expectedByNow
 
         // Being ahead is not projected forward at all. Being behind is, immediately.
         //
@@ -179,18 +194,8 @@ object Energetics {
         val estimate = typicalDay + creditedSurplus
 
         // Whatever the model says, the rest of today cannot burn less than resting.
-        val restOfDayFloor = burnedSoFar + bmrPerDay * (1.0 - dayFraction)
-        val modelledBurn = maxOf(estimate, restOfDayFloor)
-
-        // Calibration says the inputs themselves are biased, so it scales the projection
-        // rather than being fenced in by it. `burnedSoFar` is left alone: it is what the
-        // tracker reported, and overwriting it would hide the disagreement.
-        val calibrating = settings.features.autoCalibration
-        val projectedBurn = if (calibrating) {
-            modelledBurn * settings.calibration.expenditureFactor
-        } else {
-            modelledBurn
-        }
+        val restOfDayFloor = correctedBurnedSoFar + correctedBmrPerDay * (1.0 - dayFraction)
+        val projectedBurn = maxOf(estimate, restOfDayFloor)
 
         // With banking on, the week is the unit: yesterday's restraint pays for today.
         val banked = if (settings.goal.useWeeklyBanking) bankedAdjustmentKcal else 0.0
@@ -211,7 +216,7 @@ object Energetics {
             rawIntakeKcal = rawIntake,
             burnedSoFarKcal = burnedSoFar,
             projectedBurnKcal = projectedBurn,
-            bmrPerDayKcal = bmrPerDay,
+            bmrPerDayKcal = correctedBmrPerDay,
             typicalDayKcal = typicalDay,
             confidence = observedFraction,
             surplusVsTypicalKcal = surplus,
