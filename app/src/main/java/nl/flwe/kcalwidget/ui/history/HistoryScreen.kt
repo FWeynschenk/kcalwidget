@@ -48,6 +48,7 @@ import nl.flwe.kcalwidget.ui.components.StatRow
 import nl.flwe.kcalwidget.ui.settings.SettingsScaffold
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import java.util.Locale
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -462,7 +463,12 @@ private fun DayRowCard(row: DayRow) {
     }
 }
 
-private fun toCsv(history: History): String {
+/**
+ * Locale.ROOT throughout: the default locale writes "92,74" on a Dutch phone, and this is
+ * comma-separated, so every weight column silently split in two and shifted the rest of
+ * the row. A spreadsheet opens it without complaint, which is what makes it dangerous.
+ */
+internal fun toCsv(history: History): String {
     val trendByDate = history.trend.points.associate { it.date to it.trendKg }
     return buildString {
         appendLine("date,intake_kcal,burn_kcal,net_kcal,weight_kg,trend_kg")
@@ -471,8 +477,10 @@ private fun toCsv(history: History): String {
             append(',').append(row.intakeKcal?.roundToInt() ?: "")
             append(',').append(row.burnKcal?.roundToInt() ?: "")
             append(',').append(row.netKcal?.roundToInt() ?: "")
-            append(',').append(row.weightKg?.let { "%.2f".format(it) } ?: "")
-            append(',').append(trendByDate[row.date]?.let { "%.2f".format(it) } ?: "")
+            append(',').append(row.weightKg?.let { String.format(Locale.ROOT, "%.2f", it) } ?: "")
+            append(',').append(
+                trendByDate[row.date]?.let { String.format(Locale.ROOT, "%.2f", it) } ?: ""
+            )
             appendLine()
         }
     }

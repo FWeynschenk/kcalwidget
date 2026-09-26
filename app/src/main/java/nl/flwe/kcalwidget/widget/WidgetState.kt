@@ -14,6 +14,7 @@ import nl.flwe.kcalwidget.data.BurnSource
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 /** What the widget should say when it cannot show numbers. */
 enum class WidgetStatus { OK, NO_HEALTH_CONNECT, NEEDS_PERMISSION, ERROR }
@@ -143,7 +144,17 @@ internal fun Preferences.toWidgetModel(): WidgetModel = WidgetModel(
     updatedAt = this[WidgetKeys.UPDATED_AT] ?: 0L,
 )
 
-private fun String?.toSeries(): List<Double> =
+/**
+ * Packs a series for the widget's preference store.
+ *
+ * Locale.ROOT is not decoration. The default locale here writes "92,74", and the series is
+ * comma-separated, so on a Dutch or German phone every value split into two and the chart
+ * plotted nonsense. The decimal separator and the delimiter must not be the same character.
+ */
+internal fun encodeSeries(values: List<Double>, decimals: Int = 0): String =
+    values.joinToString(",") { String.format(Locale.ROOT, "%.${decimals}f", it) }
+
+internal fun String?.toSeries(): List<Double> =
     this?.split(',')?.mapNotNull { it.toDoubleOrNull() }.orEmpty()
 
 internal fun burnSourceLabel(name: String?): String = when (name) {

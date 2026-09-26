@@ -93,11 +93,10 @@ class TrendWidget : GlanceAppWidget() {
                     Spacer(GlanceModifier.height(4.dp))
                     Text(
                         text = if (model.goalDeltaKcal != 0.0) {
-                            "Bars: daily net against your " +
-                                "${model.goalDeltaKcal.roundToInt()} kcal goal (dashed). " +
-                                "Line: weight."
+                            "Top: weight, in kg. Below: daily net against your " +
+                                "${model.goalDeltaKcal.roundToInt()} kcal goal (dashed)."
                         } else {
-                            "Bars: daily net against the zero line. Line: weight."
+                            "Top: weight, in kg. Below: daily net against zero."
                         },
                         style = TextStyle(
                             fontSize = 10.sp,

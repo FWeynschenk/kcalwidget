@@ -117,11 +117,13 @@ object WidgetRepository {
                 history?.let { h ->
                     h.trend.currentTrendKg?.let { prefs[WidgetKeys.TREND_WEIGHT_KG] = it }
                     h.trend.weeklyChangeKg?.let { prefs[WidgetKeys.WEEKLY_TREND_KG] = it }
-                    prefs[WidgetKeys.NET_SERIES] = h.rows.takeLast(TREND_DAYS)
-                        .mapNotNull { it.netKcal }
-                        .joinToString(",") { it.roundToIntString() }
-                    prefs[WidgetKeys.WEIGHT_SERIES] = h.trend.points.takeLast(TREND_DAYS * 2)
-                        .joinToString(",") { "%.2f".format(it.trendKg) }
+                    prefs[WidgetKeys.NET_SERIES] = encodeSeries(
+                        h.rows.takeLast(TREND_DAYS).mapNotNull { it.netKcal }
+                    )
+                    prefs[WidgetKeys.WEIGHT_SERIES] = encodeSeries(
+                        h.trend.points.takeLast(TREND_DAYS * 2).map { it.trendKg },
+                        decimals = 2,
+                    )
                 }
             }
         }
@@ -147,5 +149,4 @@ object WidgetRepository {
         return System.currentTimeMillis() - newest >= minAgeMs
     }
 
-    private fun Double.roundToIntString(): String = Math.round(this).toString()
 }
