@@ -193,12 +193,15 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
         val max = all.max()
         val span = (max - min).coerceAtLeast(0.5)
 
+        fun frac(kg: Double) = (1f - ((kg - min) / span).toFloat()) * 0.88f + 0.06f
         val chartHeight = 160.dp
         ScrubbableChart(
             xFractions = series.indices.map { it.toFloat() / (series.size - 1) },
             chartHeight = chartHeight,
-            axisTop = "%.1f kg".format(max),
-            axisBottom = "%.1f kg".format(min),
+            axisLabels = listOf(
+                frac(max) to "%.1f kg".format(max),
+                frac(min) to "%.1f kg".format(min),
+            ),
             markerColor = MARKER,
             below = { DateAxis(series.first().date, series.last().date) },
             readout = { index ->
@@ -222,8 +225,7 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
             },
         ) { selected ->
             fun x(index: Int) = index.toFloat() / (series.size - 1) * size.width
-            fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.88f +
-                size.height * 0.06f
+            fun y(kg: Double) = frac(kg) * size.height
 
             // Predicted: a continuous line, because every day contributes to it.
             for (i in 0 until series.size - 1) {

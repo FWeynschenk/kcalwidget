@@ -33,7 +33,6 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import nl.flwe.kcalwidget.data.history.BankedCarry
 import nl.flwe.kcalwidget.data.history.DayRow
 import nl.flwe.kcalwidget.data.history.History
-import nl.flwe.kcalwidget.data.history.HistoryRepository
 import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.ui.MainViewModel
 import nl.flwe.kcalwidget.ui.components.ChartLegend
@@ -156,19 +155,27 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             return@SectionCard
         }
 
-        // The target has to fit on the axis, or the one line that makes the chart
-        // readable is the one line drawn off the top of it.
-        val maxMagnitude = (nets.filterNotNull() + target)
-            .maxOfOrNull { abs(it) }?.coerceAtLeast(1.0) ?: 1.0
-        val bound = maxMagnitude.roundToInt()
+        // The axis covers what is actually there, plus zero and the target, rather than
+        // running symmetrically around zero. A month of pure deficit under a symmetric
+        // axis leaves the entire top half blank and squeezes every bar into the bottom.
+        val values = nets.filterNotNull() + target + 0.0
+        val high = values.max()
+        val low = values.min()
+        val axisSpan = (high - low).coerceAtLeast(1.0)
+        // A little headroom so the largest bar is not flush against the edge.
+        fun frac(kcal: Double) = (((high - kcal) / axisSpan).toFloat() * 0.92f) + 0.04f
         val chartHeight = 140.dp
 
         ScrubbableChart(
             xFractions = shown.indices.map { (it + 0.5f) / shown.size },
             chartHeight = chartHeight,
-            axisTop = "+$bound",
-            axisMiddle = "0",
-            axisBottom = "-$bound",
+            // Zero first: it is the reference, so it is the label that survives if a
+            // barely-positive maximum lands on top of it.
+            axisLabels = buildList {
+                add(frac(0.0) to "0")
+                if (high > 0) add(frac(high) to "+${high.roundToInt()}")
+                if (low < 0) add(frac(low) to "${low.roundToInt()}")
+            },
             markerColor = MARKER,
             below = {
                 if (shown.size >= 2) DateAxis(shown.first().date, shown.last().date)
@@ -188,7 +195,8 @@ private fun NetChartCard(history: History, settings: AppSettings) {
                                 val met = if (gaining) net >= target else net <= target
                                 add(
                                     "Against your goal" to
-                                        "${signed(abs(off))} kcal ${if (met) "past it" else "short"}"
+                                        "${abs(off).roundToInt()} kcal " +
+                                        if (met) "past it" else "short"
                                 )
                             }
                         }
@@ -197,13 +205,14 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             },
         ) { selected ->
             val slot = size.width / nets.size
-            val midY = size.height / 2
-            fun y(kcal: Double) = midY - (kcal / maxMagnitude * (midY * 0.85)).toFloat()
+            // One mapping for the bars and the labels both, so they cannot drift apart.
+            fun y(kcal: Double) = frac(kcal) * size.height
+            val zeroY = y(0.0)
 
             drawLine(
                 color = Color.Gray,
-                start = Offset(0f, midY),
-                end = Offset(size.width, midY),
+                start = Offset(0f, zeroY),
+                end = Offset(size.width, zeroY),
                 strokeWidth = 1f,
             )
 
@@ -215,8 +224,8 @@ private fun NetChartCard(history: History, settings: AppSettings) {
                 // zero it fell on. A 200 kcal deficit against a 500 kcal goal is a
                 // miss, and it used to be drawn the same green as a day that hit it.
                 val onTrack = if (gaining) net >= target else net <= target
-                val top = minOf(y(net), midY)
-                val bottom = maxOf(y(net), midY)
+                val top = minOf(y(net), zeroY)
+                val bottom = maxOf(y(net), zeroY)
                 drawRect(
                     color = if (onTrack) UNDER else OVER,
                     topLeft = Offset(left, top),
@@ -304,8 +313,9 @@ private fun CarryCard(carry: BankedCarry) {
                 append("positive day left something over. They add up to ")
                 append("${signed(carry.rawTotalKcal)} kcal")
                 if (carry.capped) {
-                    append(", capped at ${HistoryRepository.MAX_BANKED_KCAL.roundToInt()} ")
-                    append("so one heavy day cannot swallow the week")
+                    // Without the sign this reads as a cap of +700 on a negative carry.
+                    append(", capped to ${signed(carry.totalKcal)} ")
+                    append("so one heavy week cannot swallow today")
                 }
                 append(". Calibration is applied here, so these figures can differ from ")
                 append("the raw ones in the day list below.")
@@ -344,6 +354,7 @@ private fun WeightChartCard(history: History) {
         val firstDay = points.first().date.toEpochDay()
         val lastDay = points.last().date.toEpochDay()
         val daySpan = (lastDay - firstDay).coerceAtLeast(1)
+        fun frac(kg: Double) = (1f - ((kg - min) / span).toFloat()) * 0.9f + 0.05f
         val chartHeight = 140.dp
 
         ScrubbableChart(
@@ -351,8 +362,10 @@ private fun WeightChartCard(history: History) {
             // evenly would put the marker on the wrong day.
             xFractions = points.map { (it.date.toEpochDay() - firstDay).toFloat() / daySpan },
             chartHeight = chartHeight,
-            axisTop = "%.1f kg".format(max),
-            axisBottom = "%.1f kg".format(min),
+            axisLabels = listOf(
+                frac(max) to "%.1f kg".format(max),
+                frac(min) to "%.1f kg".format(min),
+            ),
             markerColor = MARKER,
             below = { DateAxis(points.first().date, points.last().date) },
             readout = { index ->
@@ -369,8 +382,7 @@ private fun WeightChartCard(history: History) {
             },
         ) { selected ->
             fun x(day: Long) = ((day - firstDay).toFloat() / daySpan) * size.width
-            fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.9f +
-                size.height * 0.05f
+            fun y(kg: Double) = frac(kg) * size.height
 
             points.forEachIndexed { index, point ->
                 drawCircle(

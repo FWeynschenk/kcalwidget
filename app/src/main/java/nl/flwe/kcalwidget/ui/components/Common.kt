@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -52,23 +53,28 @@ import kotlin.math.abs
  */
 @Composable
 fun VerticalAxis(
-    top: String,
-    bottom: String,
-    middle: String? = null,
+    /**
+     * Each label and where it sits, 0 at the top of the plot and 1 at the bottom. Given as
+     * positions rather than top/middle/bottom because an axis that does not straddle zero
+     * evenly would otherwise print "0" at the vertical centre, where zero is not.
+     */
+    labels: List<Pair<Float, String>>,
     chartHeight: Dp,
     /** Rendered directly under the plot, inside the same column, so it lines up exactly. */
     below: @Composable () -> Unit = {},
     chart: @Composable () -> Unit,
 ) {
     Row(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.height(chartHeight).padding(end = 8.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-            horizontalAlignment = Alignment.End,
-        ) {
-            Text(top, style = MaterialTheme.typography.labelSmall)
-            if (middle != null) Text(middle, style = MaterialTheme.typography.labelSmall)
-            Text(bottom, style = MaterialTheme.typography.labelSmall)
+        Box(modifier = Modifier.height(chartHeight).padding(end = 8.dp)) {
+            spacedLabels(labels).forEach { (fraction, text) ->
+                Text(
+                    text,
+                    style = MaterialTheme.typography.labelSmall,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .offset(y = chartHeight * fraction.coerceIn(0f, 1f) - LABEL_HALF_HEIGHT),
+                )
+            }
         }
         // The gutter is as wide as its widest label, so guessing an inset for the date
         // row would put it a few dp out on every device. It goes in this column instead.
@@ -77,6 +83,27 @@ fun VerticalAxis(
             below()
         }
     }
+}
+
+/** Nudges a label up by half a line so it centres on its value rather than hanging below it. */
+private val LABEL_HALF_HEIGHT = 8.dp
+
+/** Two labels closer together than this would overprint each other. */
+private const val MIN_LABEL_GAP = 0.09f
+
+/**
+ * Drops labels that would land on top of one another, earlier entries winning.
+ *
+ * A month of nothing but deficits puts the largest surplus a hair above zero, and "+136"
+ * printed across "0" is worse than no maximum at all. Callers pass the reference value
+ * first so it is the one that survives.
+ */
+internal fun spacedLabels(labels: List<Pair<Float, String>>): List<Pair<Float, String>> {
+    val kept = mutableListOf<Pair<Float, String>>()
+    labels.forEach { candidate ->
+        if (kept.none { abs(it.first - candidate.first) < MIN_LABEL_GAP }) kept += candidate
+    }
+    return kept
 }
 
 /** Oldest on the left, newest on the right, which is the direction the charts are drawn. */
@@ -109,10 +136,9 @@ fun DateAxis(first: LocalDate, last: LocalDate) {
 fun ScrubbableChart(
     xFractions: List<Float>,
     chartHeight: Dp,
-    axisTop: String,
-    axisBottom: String,
+    /** Axis labels and where each one sits vertically, 0 at the top and 1 at the bottom. */
+    axisLabels: List<Pair<Float, String>>,
     markerColor: Color,
-    axisMiddle: String? = null,
     below: @Composable () -> Unit = {},
     readout: @Composable (index: Int) -> Unit,
     chart: DrawScope.(selected: Int) -> Unit,
@@ -129,13 +155,7 @@ fun ScrubbableChart(
     readout(selected.coerceIn(xFractions.indices))
     Spacer(Modifier.height(6.dp))
 
-    VerticalAxis(
-        top = axisTop,
-        bottom = axisBottom,
-        middle = axisMiddle,
-        chartHeight = chartHeight,
-        below = below,
-    ) {
+    VerticalAxis(labels = axisLabels, chartHeight = chartHeight, below = below) {
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
