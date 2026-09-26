@@ -38,6 +38,7 @@ object WidgetKeys {
     val WEEKLY_TREND_KG = doublePreferencesKey("weekly_trend_kg")
     val DAYS_SINCE_WEIGH_IN = intPreferencesKey("days_since_weigh_in")
     val WEIGH_IN_DUE = booleanPreferencesKey("weigh_in_due")
+    val GOAL_DELTA = doublePreferencesKey("goal_delta")
     val NET_SERIES = stringPreferencesKey("net_series")
     val WEIGHT_SERIES = stringPreferencesKey("weight_series")
     val UPDATED_AT = longPreferencesKey("updated_at")
@@ -69,6 +70,8 @@ internal data class WidgetModel(
     val weeklyTrendKg: Double?,
     val daysSinceWeighIn: Int?,
     val weighInDue: Boolean,
+    /** The goal's daily allowance, so the trend chart can draw the line it is judged against. */
+    val goalDeltaKcal: Double,
     val netSeries: List<Double>,
     val weightSeries: List<Double>,
     val updatedAt: Long,
@@ -134,6 +137,7 @@ internal fun Preferences.toWidgetModel(): WidgetModel = WidgetModel(
     weeklyTrendKg = this[WidgetKeys.WEEKLY_TREND_KG],
     daysSinceWeighIn = this[WidgetKeys.DAYS_SINCE_WEIGH_IN],
     weighInDue = this[WidgetKeys.WEIGH_IN_DUE] ?: false,
+    goalDeltaKcal = this[WidgetKeys.GOAL_DELTA] ?: 0.0,
     netSeries = this[WidgetKeys.NET_SERIES].toSeries(),
     weightSeries = this[WidgetKeys.WEIGHT_SERIES].toSeries(),
     updatedAt = this[WidgetKeys.UPDATED_AT] ?: 0L,

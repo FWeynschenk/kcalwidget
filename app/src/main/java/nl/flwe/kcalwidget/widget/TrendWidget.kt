@@ -79,6 +79,7 @@ class TrendWidget : GlanceAppWidget() {
                             heightPx = (chartHeightDp * density).roundToInt(),
                             netSeries = model.netSeries,
                             weightSeries = model.weightSeries,
+                            targetNetKcal = model.goalDeltaKcal,
                             night = night,
                         )
                         Image(
@@ -88,6 +89,21 @@ class TrendWidget : GlanceAppWidget() {
                             modifier = GlanceModifier.fillMaxWidth().height(chartHeightDp.dp),
                         )
                     }
+
+                    Spacer(GlanceModifier.height(4.dp))
+                    Text(
+                        text = if (model.goalDeltaKcal != 0.0) {
+                            "Bars: daily net against your " +
+                                "${model.goalDeltaKcal.roundToInt()} kcal goal (dashed). " +
+                                "Line: weight."
+                        } else {
+                            "Bars: daily net against the zero line. Line: weight."
+                        },
+                        style = TextStyle(
+                            fontSize = 10.sp,
+                            color = GlanceTheme.colors.onSurfaceVariant,
+                        ),
+                    )
 
                     Spacer(GlanceModifier.height(6.dp))
                     Row(modifier = GlanceModifier.fillMaxWidth()) {

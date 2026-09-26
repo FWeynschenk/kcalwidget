@@ -55,6 +55,40 @@ data class HistoryDiagnostics(
     val timings: List<String>,
 )
 
+/** What one past day lends to, or takes from, today's budget. */
+data class CarryDay(
+    val date: LocalDate,
+    /** Calibrated burn for that day, as the carry counted it. */
+    val burnKcal: Double,
+    /** Calibrated intake for that day, as the carry counted it. */
+    val intakeKcal: Double,
+    /** The goal's own allowance for that day. */
+    val goalDeltaKcal: Double,
+) {
+    /** Positive means that day left something over for today. */
+    val kcal: Double get() = (burnKcal + goalDeltaKcal) - intakeKcal
+}
+
+/**
+ * The past week's surplus or deficit, and where every kcal of it came from.
+ *
+ * Banking silently moves the budget by hundreds of kcal, so the total alone is not enough:
+ * without the days behind it, a budget that looks wrong cannot be checked against anything.
+ */
+data class BankedCarry(
+    val days: List<CarryDay>,
+    /** Before the cap. */
+    val rawTotalKcal: Double,
+    /** After the cap: what actually reaches the budget. */
+    val totalKcal: Double,
+) {
+    val capped: Boolean get() = kotlin.math.abs(rawTotalKcal - totalKcal) > 0.5
+
+    companion object {
+        val NONE = BankedCarry(emptyList(), 0.0, 0.0)
+    }
+}
+
 data class History(
     /** Complete days only, oldest first. Today is excluded because it is still running. */
     val rows: List<DayRow>,
@@ -63,9 +97,10 @@ data class History(
      * Carried-over surplus or deficit from the past week, for weekly banking. Positive
      * means the week is ahead of the goal and today can afford more.
      */
-    val bankedAdjustmentKcal: Double,
+    val carry: BankedCarry,
     val diagnostics: HistoryDiagnostics,
 ) {
+    val bankedAdjustmentKcal: Double get() = carry.totalKcal
     val daysWithIntake: Int get() = rows.count { it.intakeKcal != null }
 }
 
@@ -153,7 +188,7 @@ class HistoryRepository(
         return History(
             rows = rows,
             trend = WeightTrend.from(weighIns),
-            bankedAdjustmentKcal = bankedAdjustment(rows, settings),
+            carry = bankedCarry(rows, settings),
             diagnostics = HistoryDiagnostics(
                 requestedDays = days,
                 allowedDays = allowed,
@@ -195,7 +230,7 @@ class HistoryRepository(
     ) = History(
         rows = emptyList(),
         trend = WeightTrend.from(emptyList()),
-        bankedAdjustmentKcal = 0.0,
+        carry = BankedCarry.NONE,
         diagnostics = HistoryDiagnostics(
             requestedDays = days,
             allowedDays = allowed,
@@ -305,21 +340,31 @@ class HistoryRepository(
          * Only days with logged food count. A day with no nutrition record looks like a
          * whole-day fast, which would hand today an enormous and entirely fictional credit.
          */
-        internal fun bankedAdjustment(rows: List<DayRow>, settings: AppSettings): Double {
+        internal fun bankedCarry(rows: List<DayRow>, settings: AppSettings): BankedCarry {
             val calibrating = settings.features.autoCalibration
             val burnFactor = if (calibrating) settings.calibration.expenditureFactor else 1.0
             val intakeFactor = if (calibrating) settings.calibration.intakeFactor else 1.0
             val delta = settings.goal.dailyEnergyDelta
 
-            val recent = rows.takeLast(BANKING_DAYS)
+            val days = rows.takeLast(BANKING_DAYS)
                 .filter { it.intakeKcal != null && it.burnKcal != null }
-            if (recent.isEmpty()) return 0.0
+                .map { row ->
+                    CarryDay(
+                        date = row.date,
+                        burnKcal = row.burnKcal!! * burnFactor,
+                        intakeKcal = row.intakeKcal!! * intakeFactor,
+                        goalDeltaKcal = delta,
+                    )
+                }
+            if (days.isEmpty()) return BankedCarry.NONE
 
-            val carried = recent.sumOf { row ->
-                (row.burnKcal!! * burnFactor + delta) - row.intakeKcal!! * intakeFactor
-            }
-            return carried.coerceIn(-MAX_BANKED_KCAL, MAX_BANKED_KCAL)
+            val raw = days.sumOf { it.kcal }
+            return BankedCarry(days, raw, raw.coerceIn(-MAX_BANKED_KCAL, MAX_BANKED_KCAL))
         }
+
+        /** The carry as a single number, which is all the budget needs. */
+        internal fun bankedAdjustment(rows: List<DayRow>, settings: AppSettings): Double =
+            bankedCarry(rows, settings).totalKcal
 
         const val DEFAULT_DAYS = 90
         const val BANKING_DAYS = 6

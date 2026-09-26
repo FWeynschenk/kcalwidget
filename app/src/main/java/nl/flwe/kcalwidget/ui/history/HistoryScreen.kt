@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -21,16 +22,23 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import nl.flwe.kcalwidget.data.history.BankedCarry
 import nl.flwe.kcalwidget.data.history.DayRow
 import nl.flwe.kcalwidget.data.history.History
+import nl.flwe.kcalwidget.data.history.HistoryRepository
+import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.ui.MainViewModel
+import nl.flwe.kcalwidget.ui.components.ChartLegend
+import nl.flwe.kcalwidget.ui.components.DateAxis
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.components.StatRow
+import nl.flwe.kcalwidget.ui.components.VerticalAxis
 import nl.flwe.kcalwidget.ui.settings.SettingsScaffold
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -40,6 +48,7 @@ import kotlin.math.roundToInt
 private val OVER = Color(0xFFB3261E)
 private val UNDER = Color(0xFF1B5E20)
 private val TREND = Color(0xFF3F51B5)
+private val TARGET = Color(0xFF8E24AA)
 
 private val DAY_LABEL = DateTimeFormatter.ofPattern("d MMM")
 
@@ -79,7 +88,10 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         }
 
         item { SummaryCard(history) }
-        item { NetChartCard(history) }
+        item { NetChartCard(history, state.settings) }
+        if (state.settings.goal.useWeeklyBanking) {
+            item { CarryCard(history.carry) }
+        }
         item { WeightChartCard(history) }
         item { ExportCard(history) }
         item {
@@ -119,75 +131,155 @@ private fun SummaryCard(history: History) {
 }
 
 @Composable
-private fun NetChartCard(history: History) {
-    val nets = history.rows.takeLast(30).map { it.netKcal }
+private fun NetChartCard(history: History, settings: AppSettings) {
+    val shown = history.rows.takeLast(30)
+    val nets = shown.map { it.netKcal }
+    val target = settings.goal.dailyEnergyDelta
+    // Gaining means clearing the line; every other goal means staying under it.
+    val gaining = target > 0
+
     SectionCard("Net balance, last 30 days") {
         if (nets.none { it != null }) {
             Text("No complete days yet.", style = MaterialTheme.typography.bodyMedium)
             return@SectionCard
         }
-        val maxMagnitude = nets.filterNotNull().maxOfOrNull { abs(it) }?.coerceAtLeast(1.0) ?: 1.0
+
+        // The target has to fit on the axis, or the one line that makes the chart
+        // readable is the one line drawn off the top of it.
+        val maxMagnitude = (nets.filterNotNull() + target)
+            .maxOfOrNull { abs(it) }?.coerceAtLeast(1.0) ?: 1.0
         val bound = maxMagnitude.roundToInt()
-        VerticalAxis(top = "+$bound", bottom = "-$bound") {
-            Canvas(modifier = Modifier.fillMaxWidth().height(120.dp)) {
+        val chartHeight = 140.dp
+
+        VerticalAxis(
+            top = "+$bound",
+            middle = "0",
+            bottom = "-$bound",
+            chartHeight = chartHeight,
+            below = {
+                if (shown.size >= 2) DateAxis(shown.first().date, shown.last().date)
+            },
+        ) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
                 val slot = size.width / nets.size
                 val midY = size.height / 2
+                fun y(kcal: Double) = midY - (kcal / maxMagnitude * (midY * 0.85)).toFloat()
+
                 drawLine(
                     color = Color.Gray,
                     start = Offset(0f, midY),
                     end = Offset(size.width, midY),
                     strokeWidth = 1f,
                 )
+
                 nets.forEachIndexed { index, net ->
                     if (net == null) return@forEachIndexed
-                    val height = (abs(net) / maxMagnitude * (midY * 0.9)).toFloat()
                     val left = index * slot + slot * 0.2f
                     val width = slot * 0.6f
-                    // Above the line is a surplus, below is a deficit.
-                    val top = if (net > 0) midY - height else midY
+                    // Colour says whether the day met the goal, not merely which side of
+                    // zero it fell on. A 200 kcal deficit against a 500 kcal goal is a
+                    // miss, and it used to be drawn the same green as a day that hit it.
+                    val onTrack = if (gaining) net >= target else net <= target
+                    val top = minOf(y(net.coerceAtLeast(0.0)), y(net))
+                    val bottom = maxOf(y(net.coerceAtMost(0.0)), y(net))
                     drawRect(
-                        color = if (net > 0) OVER else UNDER,
+                        color = if (onTrack) UNDER else OVER,
                         topLeft = Offset(left, top),
-                        size = androidx.compose.ui.geometry.Size(width, height),
+                        size = androidx.compose.ui.geometry.Size(width, bottom - top),
+                    )
+                }
+
+                if (target != 0.0) {
+                    val targetY = y(target)
+                    drawLine(
+                        color = TARGET,
+                        start = Offset(0f, targetY),
+                        end = Offset(size.width, targetY),
+                        strokeWidth = 3f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
                     )
                 }
             }
         }
-        history.rows.takeLast(30).let { shown ->
-            if (shown.size >= 2) DateAxis(shown.first().date, shown.last().date)
+
+        if (target != 0.0) {
+            ChartLegend(
+                listOf(
+                    UNDER to "Met the goal",
+                    OVER to "Short of it",
+                    TARGET to "Goal: ${target.roundToInt()} kcal/day",
+                )
+            )
+            Spacer(Modifier.height(4.dp))
+            Explainer(
+                "The dashed line is what your goal asks for each day: " +
+                    "${target.roundToInt()} kcal. " +
+                    if (gaining) {
+                        "Bars reaching above it are days you ate enough to gain at your " +
+                            "chosen rate; bars short of it are days you did not."
+                    } else {
+                        "Bars reaching below it are days you ran the deficit you wanted; " +
+                            "bars that stop short are deficits too small to hit your rate."
+                    }
+            )
+        } else {
+            ChartLegend(listOf(UNDER to "Deficit", OVER to "Surplus"))
+            Spacer(Modifier.height(4.dp))
+            Explainer(
+                "Your goal is to maintain, so the zero line is the target: bars either " +
+                    "side of it are days you ate more or less than you burned."
+            )
         }
-        Explainer("Green below the line is a deficit; red above it is a surplus.")
     }
 }
 
 /**
- * Labels the vertical range of a chart: highest value at the top, lowest at the bottom,
- * beside the plot rather than under it. A min and a max laid out left to right under a
- * time series reads as "then" and "now", which is the one thing they are not.
+ * Where the weekly carry came from, day by day.
+ *
+ * Banking moves today's budget by up to 700 kcal on the strength of days that are no
+ * longer on screen anywhere else. The total on its own is an assertion; this is the
+ * working behind it.
  */
 @Composable
-private fun VerticalAxis(top: String, bottom: String, chart: @Composable () -> Unit) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(
-            modifier = Modifier.padding(end = 8.dp),
-            verticalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(top, style = MaterialTheme.typography.bodySmall)
-            Spacer(modifier = Modifier.height(72.dp))
-            Text(bottom, style = MaterialTheme.typography.bodySmall)
+private fun CarryCard(carry: BankedCarry) {
+    SectionCard("Carried into today") {
+        if (carry.days.isEmpty()) {
+            Text(
+                "No complete days with food logged yet, so nothing is being carried.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            return@SectionCard
         }
-        Box(modifier = Modifier.weight(1f)) { chart() }
+
+        carry.days.forEach { day ->
+            StatRow(
+                label = DAY_LABEL.format(day.date),
+                value = "${signed(day.kcal)} kcal",
+            )
+        }
+        Spacer(Modifier.height(4.dp))
+        HorizontalDivider()
+        Spacer(Modifier.height(4.dp))
+        StatRow("Carried into today", "${signed(carry.totalKcal)} kcal")
+        Spacer(Modifier.height(8.dp))
+        Explainer(
+            buildString {
+                append("Each day is its burn plus your goal, minus what you ate, so a ")
+                append("positive day left something over. They add up to ")
+                append("${signed(carry.rawTotalKcal)} kcal")
+                if (carry.capped) {
+                    append(", capped at ${HistoryRepository.MAX_BANKED_KCAL.roundToInt()} ")
+                    append("so one heavy day cannot swallow the week")
+                }
+                append(". Calibration is applied here, so these figures can differ from ")
+                append("the raw ones in the day list below.")
+            }
+        )
     }
 }
 
-/** Oldest on the left, newest on the right, which is the direction the chart is drawn. */
-@Composable
-private fun DateAxis(first: LocalDate, last: LocalDate) {
-    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(DAY_LABEL.format(first), style = MaterialTheme.typography.bodySmall)
-        Text(DAY_LABEL.format(last), style = MaterialTheme.typography.bodySmall)
-    }
-}
+private fun signed(kcal: Double) =
+    "${if (kcal >= 0) "+" else ""}${kcal.roundToInt()}"
 
 @Composable
 private fun WeightChartCard(history: History) {
@@ -208,8 +300,14 @@ private fun WeightChartCard(history: History) {
         // The kg bounds go beside the chart, heaviest at the top, because that is the axis
         // they describe. Along the bottom they read as a start and an end, which is the
         // opposite of what they mean.
-        VerticalAxis(top = "%.1f kg".format(max), bottom = "%.1f kg".format(min)) {
-            Canvas(modifier = Modifier.fillMaxWidth().height(140.dp)) {
+        val chartHeight = 140.dp
+        VerticalAxis(
+            top = "%.1f kg".format(max),
+            bottom = "%.1f kg".format(min),
+            chartHeight = chartHeight,
+            below = { DateAxis(points.first().date, points.last().date) },
+        ) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
                 fun x(day: Long) = ((day - firstDay).toFloat() / daySpan) * size.width
                 fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.9f +
                     size.height * 0.05f
@@ -233,7 +331,8 @@ private fun WeightChartCard(history: History) {
                 }
             }
         }
-        DateAxis(points.first().date, points.last().date)
+        ChartLegend(listOf(Color.Gray to "Weigh-ins", TREND to "Smoothed trend"))
+        Spacer(Modifier.height(4.dp))
         Explainer("Grey dots are what the scale said; the line is the smoothed trend.")
     }
 }

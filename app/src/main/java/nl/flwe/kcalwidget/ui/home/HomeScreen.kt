@@ -163,6 +163,30 @@ fun HomeScreen(
     }
 }
 
+/**
+ * The budget, written out as the sum it actually is.
+ *
+ * A single "Budget: 2180" cannot be argued with, and with banking on it moves by hundreds
+ * of kcal for reasons that happened days ago. Each term gets its own line so the number
+ * can be checked rather than believed.
+ */
+@Composable
+private fun BudgetBreakdown(energy: DayEnergy) {
+    val goal = energy.goalDeltaKcal.roundToInt()
+    val carry = energy.bankedAdjustmentKcal.roundToInt()
+
+    StatRow(
+        label = if (goal == 0) "Goal (maintain)" else "Goal",
+        value = "${signed(goal)} kcal",
+    )
+    if (energy.bankingApplied) {
+        StatRow("Carried from the past week", "${signed(carry)} kcal")
+    }
+    StatRow("Budget", "${energy.budgetKcal.roundToInt()} kcal")
+}
+
+private fun signed(kcal: Int) = if (kcal > 0) "+$kcal" else kcal.toString()
+
 @Composable
 private fun TodayCard(energy: DayEnergy?) {
     SectionCard("Today") {
@@ -210,7 +234,7 @@ private fun TodayCard(energy: DayEnergy?) {
             value = "${energy.burnedSoFarKcal.roundToInt()} kcal",
         )
         StatRow("Projected by midnight", "${energy.projectedBurnKcal.roundToInt()} kcal")
-        StatRow("Budget", "${energy.budgetKcal.roundToInt()} kcal")
+        BudgetBreakdown(energy)
         StatRow("Resting rate", "${energy.bmrPerDayKcal.roundToInt()} kcal/day")
         StatRow(
             label = if (energy.baselineDays > 0) {
@@ -247,6 +271,31 @@ private fun TodayCard(energy: DayEnergy?) {
                     "are corrected by what your weight trend says your numbers really are. " +
                     "Burn so far and intake as logged are shown untouched, so you can still " +
                     "see what your apps reported."
+            )
+        }
+        if (energy.bankingApplied) {
+            Spacer(Modifier.height(8.dp))
+            Explainer(
+                buildString {
+                    append("Weekly banking is on, so the budget is the projection plus your ")
+                    append("goal, plus whatever the past six days left over. ")
+                    append(
+                        when {
+                            energy.bankedAdjustmentKcal > 1 ->
+                                "Those days came in under, so today has " +
+                                    "${energy.bankedAdjustmentKcal.roundToInt()} kcal more " +
+                                    "than the goal alone would give."
+                            energy.bankedAdjustmentKcal < -1 ->
+                                "Those days came in over, so today is paying " +
+                                    "${(-energy.bankedAdjustmentKcal).roundToInt()} kcal of " +
+                                    "it back."
+                            else ->
+                                "The week has come out even so far, so the budget is the " +
+                                    "goal on its own."
+                        }
+                    )
+                    append(" History shows the day-by-day figures behind that carry.")
+                }
             )
         }
         if (energy.intakeFloorApplied) {

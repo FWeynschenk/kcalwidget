@@ -30,10 +30,13 @@ import nl.flwe.kcalwidget.data.weight.Calibration
 import nl.flwe.kcalwidget.data.weight.CalibrationResult
 import nl.flwe.kcalwidget.data.weight.DivergencePoint
 import nl.flwe.kcalwidget.ui.MainViewModel
+import nl.flwe.kcalwidget.ui.components.ChartLegend
 import nl.flwe.kcalwidget.ui.components.ChoiceRow
+import nl.flwe.kcalwidget.ui.components.DateAxis
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.components.StatRow
+import nl.flwe.kcalwidget.ui.components.VerticalAxis
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -187,46 +190,55 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
         val max = all.max()
         val span = (max - min).coerceAtLeast(0.5)
 
-        Canvas(modifier = Modifier.fillMaxWidth().height(160.dp)) {
-            fun x(index: Int) = index.toFloat() / (series.size - 1) * size.width
-            fun y(kg: Double) =
-                (1f - ((kg - min) / span).toFloat()) * size.height * 0.88f + size.height * 0.06f
+        val chartHeight = 160.dp
+        VerticalAxis(
+            top = "%.1f kg".format(max),
+            bottom = "%.1f kg".format(min),
+            chartHeight = chartHeight,
+            below = { DateAxis(series.first().date, series.last().date) },
+        ) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
+                fun x(index: Int) = index.toFloat() / (series.size - 1) * size.width
+                fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.88f +
+                    size.height * 0.06f
 
-            // Predicted: a continuous line, because every day contributes to it.
-            for (i in 0 until series.size - 1) {
-                drawLine(
-                    color = PREDICTED,
-                    start = Offset(x(i), y(series[i].expectedKg)),
-                    end = Offset(x(i + 1), y(series[i + 1].expectedKg)),
-                    strokeWidth = 4f,
-                )
-            }
+                // Predicted: a continuous line, because every day contributes to it.
+                for (i in 0 until series.size - 1) {
+                    drawLine(
+                        color = PREDICTED,
+                        start = Offset(x(i), y(series[i].expectedKg)),
+                        end = Offset(x(i + 1), y(series[i + 1].expectedKg)),
+                        strokeWidth = 4f,
+                    )
+                }
 
-            // Actual: only where it was measured, joined between weigh-ins.
-            val measured = series.withIndex().filter { it.value.actualKg != null }
-            for (i in 0 until measured.size - 1) {
-                val (ai, a) = measured[i]
-                val (bi, b) = measured[i + 1]
-                drawLine(
-                    color = ACTUAL,
-                    start = Offset(x(ai), y(a.actualKg!!)),
-                    end = Offset(x(bi), y(b.actualKg!!)),
-                    strokeWidth = 5f,
-                )
-            }
-            measured.forEach { (index, point) ->
-                drawCircle(
-                    color = ACTUAL,
-                    radius = 5f,
-                    center = Offset(x(index), y(point.actualKg!!)),
-                )
+                // Actual: only where it was measured, joined between weigh-ins.
+                val measured = series.withIndex().filter { it.value.actualKg != null }
+                for (i in 0 until measured.size - 1) {
+                    val (ai, a) = measured[i]
+                    val (bi, b) = measured[i + 1]
+                    drawLine(
+                        color = ACTUAL,
+                        start = Offset(x(ai), y(a.actualKg!!)),
+                        end = Offset(x(bi), y(b.actualKg!!)),
+                        strokeWidth = 5f,
+                    )
+                }
+                measured.forEach { (index, point) ->
+                    drawCircle(
+                        color = ACTUAL,
+                        radius = 5f,
+                        center = Offset(x(index), y(point.actualKg!!)),
+                    )
+                }
             }
         }
-
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("%.1f kg".format(min), style = MaterialTheme.typography.bodySmall)
-            Text("%.1f kg".format(max), style = MaterialTheme.typography.bodySmall)
-        }
+        ChartLegend(
+            listOf(
+                PREDICTED to "Predicted by calories",
+                ACTUAL to "Measured weight",
+            )
+        )
         Spacer(Modifier.height(8.dp))
         Explainer(
             "Blue is what your food and burn numbers predict. Green is your smoothed " +

@@ -49,6 +49,14 @@ data class DayEnergy(
     val budgetKcal: Double,
     /** Surplus or deficit carried in from the past week, 0 unless banking is on. */
     val bankedAdjustmentKcal: Double,
+    /**
+     * True when weekly banking contributed to the budget. Distinct from a zero carry:
+     * "banking is on and the week came out even" and "banking is off" are different
+     * answers to "why is my budget that number".
+     */
+    val bankingApplied: Boolean,
+    /** The goal's daily allowance, negative to lose and positive to gain. */
+    val goalDeltaKcal: Double,
     /** True when learned calibration factors were applied to burn and intake. */
     val calibrationApplied: Boolean,
     /** True when the goal's own budget was below the floor and the floor won. */
@@ -223,6 +231,8 @@ object Energetics {
             baselineDays = effectiveBaseline.sampleDays,
             budgetKcal = budget,
             bankedAdjustmentKcal = banked,
+            bankingApplied = settings.goal.useWeeklyBanking,
+            goalDeltaKcal = settings.goal.dailyEnergyDelta,
             calibrationApplied = calibrating,
             intakeFloorApplied = goalBudget < floor,
             remainingKcal = remaining,

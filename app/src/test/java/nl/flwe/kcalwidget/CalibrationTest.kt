@@ -1,6 +1,7 @@
 package nl.flwe.kcalwidget
 
 import nl.flwe.kcalwidget.data.Energetics
+import nl.flwe.kcalwidget.data.history.BankedCarry
 import nl.flwe.kcalwidget.data.history.DayRow
 import nl.flwe.kcalwidget.data.history.History
 import nl.flwe.kcalwidget.data.history.HistoryDiagnostics
@@ -51,7 +52,7 @@ class CalibrationTest {
     private fun history(
         rows: List<DayRow> = rows(),
         trend: WeightTrend = trend(-0.4545),
-    ) = History(rows, trend, 0.0, NO_DIAGNOSTICS)
+    ) = History(rows, trend, BankedCarry.NONE, NO_DIAGNOSTICS)
 
     private val NO_DIAGNOSTICS = HistoryDiagnostics(
         requestedDays = 0,

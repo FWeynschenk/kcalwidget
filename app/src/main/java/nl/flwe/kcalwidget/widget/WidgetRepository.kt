@@ -109,6 +109,7 @@ object WidgetRepository {
                     prefs[WidgetKeys.BURN_SOURCE] = energy.source.name
                     prefs[WidgetKeys.HAS_NUTRITION] = energy.hasNutritionData
                     prefs[WidgetKeys.CALIBRATION_APPLIED] = energy.calibrationApplied
+                    prefs[WidgetKeys.GOAL_DELTA] = energy.goalDeltaKcal
                     prefs[WidgetKeys.WEIGHT_KG] = energy.weightKg
                     prefs[WidgetKeys.WEIGH_IN_DUE] = weighInDue(energy.daysSinceWeighIn, settings)
                     energy.daysSinceWeighIn?.let { prefs[WidgetKeys.DAYS_SINCE_WEIGH_IN] = it }
