@@ -31,6 +31,8 @@ import nl.flwe.kcalwidget.ui.MainViewModel
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.NavRow
 import nl.flwe.kcalwidget.ui.components.NumberField
+import nl.flwe.kcalwidget.ui.components.parseDecimal
+import nl.flwe.kcalwidget.ui.components.parseWholeNumber
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.nav.Routes
 import kotlin.math.abs
@@ -135,17 +137,21 @@ fun BodyScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                 }
                 Spacer(Modifier.height(8.dp))
                 NumberField("Birth year", body.birthYear.toString()) { text ->
-                    text.toIntOrNull()?.let { year ->
+                    parseWholeNumber(text)?.let { year ->
                         viewModel.updateSettings { it.copy(body = it.body.copy(birthYear = year)) }
                     }
                 }
                 NumberField("Height (cm)", body.heightCm.toString()) { text ->
-                    text.toIntOrNull()?.let { cm ->
+                    parseWholeNumber(text)?.let { cm ->
                         viewModel.updateSettings { it.copy(body = it.body.copy(heightCm = cm)) }
                     }
                 }
-                NumberField("Weight fallback (kg)", body.fallbackWeightKg.toString()) { text ->
-                    text.toDoubleOrNull()?.let { kg ->
+                NumberField(
+                    label = "Weight fallback (kg)",
+                    value = "%.1f".format(body.fallbackWeightKg),
+                    decimal = true,
+                ) { text ->
+                    parseDecimal(text)?.let { kg ->
                         viewModel.updateSettings {
                             it.copy(body = it.body.copy(fallbackWeightKg = kg))
                         }

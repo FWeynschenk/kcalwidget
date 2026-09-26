@@ -43,7 +43,8 @@ object WeightGoal {
             nextBandBmi?.let {
                 add(
                     GoalPreset(
-                        label = "Out of ${Bmi.bandFor(bmi).label.lowercase()}",
+                        // Only the first letter, or "Obesity, class I" comes back as "class i".
+                        label = "Out of ${Bmi.bandFor(bmi).label.uncapitalise()}",
                         targetKg = Bmi.weightForBmi(it, heightCm),
                         rationale = "The next band down, at BMI $it.",
                     )
@@ -153,3 +154,6 @@ object WeightGoal {
     /** Ignore differences smaller than this; they are inside the noise of a scale. */
     private const val MIN_STEP_KG = 0.5
 }
+
+private fun String.uncapitalise(): String =
+    replaceFirstChar { it.lowercaseChar() }

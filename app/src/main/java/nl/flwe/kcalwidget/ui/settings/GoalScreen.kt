@@ -26,6 +26,8 @@ import nl.flwe.kcalwidget.ui.MainViewModel
 import nl.flwe.kcalwidget.ui.components.ChoiceRow
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.NumberField
+import nl.flwe.kcalwidget.ui.components.parseDecimal
+import nl.flwe.kcalwidget.ui.components.parseWholeNumber
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.components.StatRow
 import kotlin.math.abs
@@ -97,7 +99,7 @@ fun GoalScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         item {
             SectionCard("Minimum intake") {
                 NumberField("Never budget below (kcal)", goal.minIntakeFloorKcal.toString()) { text ->
-                    text.toIntOrNull()?.let { kcal ->
+                    parseWholeNumber(text)?.let { kcal ->
                         viewModel.updateSettings {
                             it.copy(goal = it.goal.copy(minIntakeFloorKcal = kcal))
                         }
@@ -173,8 +175,12 @@ private fun TargetWeightCard(viewModel: MainViewModel, trendKg: Double, heightCm
             Spacer(Modifier.height(8.dp))
         }
 
-        NumberField("Or set your own (kg)", target?.let { "%.1f".format(it) } ?: "") { text ->
-            text.toDoubleOrNull()?.takeIf { it in 30.0..300.0 }?.let { kg ->
+        NumberField(
+            label = "Or set your own (kg)",
+            value = target?.let { "%.1f".format(it) } ?: "",
+            decimal = true,
+        ) { text ->
+            parseDecimal(text)?.takeIf { it in 30.0..300.0 }?.let { kg ->
                 viewModel.updateSettings {
                     it.copy(goal = it.goal.copy(targetWeightKg = kg, goalAchievedAt = null))
                 }

@@ -58,6 +58,7 @@ import nl.flwe.kcalwidget.ui.MainViewModel
 import nl.flwe.kcalwidget.ui.components.ChoiceRow
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.NumberField
+import nl.flwe.kcalwidget.ui.components.parseWholeNumber
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.components.StatRow
 import nl.flwe.kcalwidget.widget.KcalWidgetReceiver
@@ -314,12 +315,12 @@ private fun BodyStep(viewModel: MainViewModel) {
         }
         Spacer(Modifier.height(8.dp))
         NumberField("Birth year", body.birthYear.toString()) { text ->
-            text.toIntOrNull()?.let { y ->
+            parseWholeNumber(text)?.let { y ->
                 viewModel.updateSettings { it.copy(body = it.body.copy(birthYear = y)) }
             }
         }
         NumberField("Height (cm)", body.heightCm.toString()) { text ->
-            text.toIntOrNull()?.let { cm ->
+            parseWholeNumber(text)?.let { cm ->
                 viewModel.updateSettings { it.copy(body = it.body.copy(heightCm = cm)) }
             }
         }

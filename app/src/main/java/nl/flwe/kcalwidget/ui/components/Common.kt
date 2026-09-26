@@ -24,6 +24,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -42,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Labels the vertical range of a chart: highest value at the top, lowest at the bottom,
@@ -347,8 +349,20 @@ fun ChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit) {
  * cursor; the field owns the text and only pushes parseable values outwards.
  */
 @Composable
-fun NumberField(label: String, value: String, onValue: (String) -> Unit) {
+fun NumberField(
+    label: String,
+    value: String,
+    /** True for a field that takes a fraction, which needs a separator key on the keypad. */
+    decimal: Boolean = false,
+    onValue: (String) -> Unit,
+) {
     val state = remember(label) { mutableStateOf(value) }
+    // Re-sync when the value is changed from somewhere else -- tapping a preset -- but not
+    // from our own keystrokes, which would fight the cursor on every character. Comparing
+    // the parsed numbers rather than the text means "85," mid-typing is left alone.
+    LaunchedEffect(value) {
+        if (parseDecimal(value) != parseDecimal(state.value)) state.value = value
+    }
     OutlinedTextField(
         value = state.value,
         onValueChange = {
@@ -357,9 +371,68 @@ fun NumberField(label: String, value: String, onValue: (String) -> Unit) {
         },
         label = { Text(label) },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = if (decimal) KeyboardType.Decimal else KeyboardType.Number,
+        ),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
     )
+}
+
+/**
+ * Reads a number the way the person in front of the phone would write it.
+ *
+ * toDoubleOrNull accepts a full stop and nothing else, so on a Dutch or German keypad --
+ * which offers a comma, and whose own formatting produces one -- every weight typed in
+ * was silently discarded, and the target-weight field could not even parse the value it
+ * had just displayed.
+ *
+ * With both separators present the last one is the decimal point, which is true in every
+ * convention. One separator, appearing once, is a decimal point. Repeated separators are
+ * digit grouping.
+ */
+fun parseDecimal(text: String): Double? {
+    val cleaned = text.trim().filterNot { it == ' ' || it == ' ' || it == ' ' }
+    if (cleaned.isEmpty()) return null
+
+    val lastComma = cleaned.lastIndexOf(',')
+    val lastDot = cleaned.lastIndexOf('.')
+    val normalised = when {
+        lastComma >= 0 && lastDot >= 0 -> {
+            val decimalAt = maxOf(lastComma, lastDot)
+            cleaned.mapIndexed { i, c ->
+                when {
+                    i == decimalAt -> '.'
+                    c == ',' || c == '.' -> null
+                    else -> c
+                }
+            }.filterNotNull().joinToString("")
+        }
+        cleaned.count { it == ',' } == 1 -> cleaned.replace(',', '.')
+        cleaned.count { it == '.' } == 1 -> cleaned
+        else -> cleaned.filterNot { it == ',' || it == '.' }
+    }
+    return normalised.toDoubleOrNull()?.takeIf { it.isFinite() }
+}
+
+/** A lone separator with exactly three digits behind it, repeated or not: "1.200". */
+private val GROUPED_DIGITS = Regex("""^-?\d{1,3}([.,]\d{3})+$""")
+
+/**
+ * [parseDecimal] for a field that cannot hold a fraction.
+ *
+ * "1.200" is genuinely ambiguous in general -- twelve hundred to a Dutch reader, one and
+ * a fifth to an English one -- but not here: the field takes whole kilocalories, so the
+ * reading that involves a fraction is the one the user cannot have meant. A separator
+ * with fewer than three digits behind it is still a decimal point, and gets rounded.
+ */
+fun parseWholeNumber(text: String): Int? {
+    val cleaned = text.trim().filterNot { it == ' ' || it == ' ' || it == ' ' }
+    if (GROUPED_DIGITS.matches(cleaned)) {
+        return cleaned.filterNot { it == '.' || it == ',' }.toIntOrNull()
+    }
+    return parseDecimal(text)
+        ?.takeIf { it >= Int.MIN_VALUE.toDouble() && it <= Int.MAX_VALUE.toDouble() }
+        ?.roundToInt()
 }
 
 @Composable
