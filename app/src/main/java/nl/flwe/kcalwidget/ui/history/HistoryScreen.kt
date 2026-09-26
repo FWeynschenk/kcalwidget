@@ -17,6 +17,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,13 +37,18 @@ import nl.flwe.kcalwidget.data.history.HistoryRepository
 import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.ui.MainViewModel
 import nl.flwe.kcalwidget.ui.components.ChartLegend
+import nl.flwe.kcalwidget.ui.components.ChartRange
+import nl.flwe.kcalwidget.ui.components.ChartReadout
+import nl.flwe.kcalwidget.ui.components.RangeSelector
+import nl.flwe.kcalwidget.ui.components.ScrubbableChart
+import nl.flwe.kcalwidget.ui.components.chartDate
 import nl.flwe.kcalwidget.ui.components.DateAxis
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.components.StatRow
-import nl.flwe.kcalwidget.ui.components.VerticalAxis
 import nl.flwe.kcalwidget.ui.settings.SettingsScaffold
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -49,6 +57,7 @@ private val OVER = Color(0xFFB3261E)
 private val UNDER = Color(0xFF1B5E20)
 private val TREND = Color(0xFF3F51B5)
 private val TARGET = Color(0xFF8E24AA)
+private val MARKER = Color(0xFF616161)
 
 private val DAY_LABEL = DateTimeFormatter.ofPattern("d MMM")
 
@@ -132,15 +141,18 @@ private fun SummaryCard(history: History) {
 
 @Composable
 private fun NetChartCard(history: History, settings: AppSettings) {
-    val shown = history.rows.takeLast(30)
+    var range by remember { mutableStateOf(ChartRange.MONTH) }
+    val shown = history.rows.takeLast(range.days)
     val nets = shown.map { it.netKcal }
     val target = settings.goal.dailyEnergyDelta
     // Gaining means clearing the line; every other goal means staying under it.
     val gaining = target > 0
 
-    SectionCard("Net balance, last 30 days") {
+    SectionCard("Net balance") {
+        RangeSelector(range, history.rows.size) { range = it }
+
         if (nets.none { it != null }) {
-            Text("No complete days yet.", style = MaterialTheme.typography.bodyMedium)
+            Text("No complete days in this range.", style = MaterialTheme.typography.bodyMedium)
             return@SectionCard
         }
 
@@ -151,54 +163,77 @@ private fun NetChartCard(history: History, settings: AppSettings) {
         val bound = maxMagnitude.roundToInt()
         val chartHeight = 140.dp
 
-        VerticalAxis(
-            top = "+$bound",
-            middle = "0",
-            bottom = "-$bound",
+        ScrubbableChart(
+            xFractions = shown.indices.map { (it + 0.5f) / shown.size },
             chartHeight = chartHeight,
+            axisTop = "+$bound",
+            axisMiddle = "0",
+            axisBottom = "-$bound",
+            markerColor = MARKER,
             below = {
                 if (shown.size >= 2) DateAxis(shown.first().date, shown.last().date)
             },
-        ) {
-            Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
-                val slot = size.width / nets.size
-                val midY = size.height / 2
-                fun y(kcal: Double) = midY - (kcal / maxMagnitude * (midY * 0.85)).toFloat()
-
-                drawLine(
-                    color = Color.Gray,
-                    start = Offset(0f, midY),
-                    end = Offset(size.width, midY),
-                    strokeWidth = 1f,
+            readout = { index ->
+                val day = shown[index]
+                val net = day.netKcal
+                ChartReadout(
+                    title = chartDate(day.date),
+                    values = buildList {
+                        add("Eaten" to (day.intakeKcal?.let { "${it.roundToInt()} kcal" } ?: "not logged"))
+                        add("Burned" to (day.burnKcal?.let { "${it.roundToInt()} kcal" } ?: "not recorded"))
+                        if (net != null) {
+                            add("Net" to "${signed(net)} kcal")
+                            if (target != 0.0) {
+                                val off = net - target
+                                val met = if (gaining) net >= target else net <= target
+                                add(
+                                    "Against your goal" to
+                                        "${signed(abs(off))} kcal ${if (met) "past it" else "short"}"
+                                )
+                            }
+                        }
+                    },
                 )
+            },
+        ) { selected ->
+            val slot = size.width / nets.size
+            val midY = size.height / 2
+            fun y(kcal: Double) = midY - (kcal / maxMagnitude * (midY * 0.85)).toFloat()
 
-                nets.forEachIndexed { index, net ->
-                    if (net == null) return@forEachIndexed
-                    val left = index * slot + slot * 0.2f
-                    val width = slot * 0.6f
-                    // Colour says whether the day met the goal, not merely which side of
-                    // zero it fell on. A 200 kcal deficit against a 500 kcal goal is a
-                    // miss, and it used to be drawn the same green as a day that hit it.
-                    val onTrack = if (gaining) net >= target else net <= target
-                    val top = minOf(y(net.coerceAtLeast(0.0)), y(net))
-                    val bottom = maxOf(y(net.coerceAtMost(0.0)), y(net))
-                    drawRect(
-                        color = if (onTrack) UNDER else OVER,
-                        topLeft = Offset(left, top),
-                        size = androidx.compose.ui.geometry.Size(width, bottom - top),
-                    )
-                }
+            drawLine(
+                color = Color.Gray,
+                start = Offset(0f, midY),
+                end = Offset(size.width, midY),
+                strokeWidth = 1f,
+            )
 
-                if (target != 0.0) {
-                    val targetY = y(target)
-                    drawLine(
-                        color = TARGET,
-                        start = Offset(0f, targetY),
-                        end = Offset(size.width, targetY),
-                        strokeWidth = 3f,
-                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
-                    )
-                }
+            nets.forEachIndexed { index, net ->
+                if (net == null) return@forEachIndexed
+                val left = index * slot + slot * 0.2f
+                val width = slot * 0.6f
+                // Colour says whether the day met the goal, not merely which side of
+                // zero it fell on. A 200 kcal deficit against a 500 kcal goal is a
+                // miss, and it used to be drawn the same green as a day that hit it.
+                val onTrack = if (gaining) net >= target else net <= target
+                val top = minOf(y(net), midY)
+                val bottom = maxOf(y(net), midY)
+                drawRect(
+                    color = if (onTrack) UNDER else OVER,
+                    topLeft = Offset(left, top),
+                    size = androidx.compose.ui.geometry.Size(width, bottom - top),
+                    alpha = if (index == selected) 1f else 0.55f,
+                )
+            }
+
+            if (target != 0.0) {
+                val targetY = y(target)
+                drawLine(
+                    color = TARGET,
+                    start = Offset(0f, targetY),
+                    end = Offset(size.width, targetY),
+                    strokeWidth = 3f,
+                    pathEffect = PathEffect.dashPathEffect(floatArrayOf(12f, 8f)),
+                )
             }
         }
 
@@ -212,8 +247,8 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             )
             Spacer(Modifier.height(4.dp))
             Explainer(
-                "The dashed line is what your goal asks for each day: " +
-                    "${target.roundToInt()} kcal. " +
+                "Drag across the chart to read any day. The dashed line is what your goal " +
+                    "asks for each day: ${target.roundToInt()} kcal. " +
                     if (gaining) {
                         "Bars reaching above it are days you ate enough to gain at your " +
                             "chosen rate; bars short of it are days you did not."
@@ -226,8 +261,9 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             ChartLegend(listOf(UNDER to "Deficit", OVER to "Surplus"))
             Spacer(Modifier.height(4.dp))
             Explainer(
-                "Your goal is to maintain, so the zero line is the target: bars either " +
-                    "side of it are days you ate more or less than you burned."
+                "Drag across the chart to read any day. Your goal is to maintain, so the " +
+                    "zero line is the target: bars either side of it are days you ate more " +
+                    "or less than you burned."
             )
         }
     }
@@ -278,15 +314,27 @@ private fun CarryCard(carry: BankedCarry) {
     }
 }
 
-private fun signed(kcal: Double) =
-    "${if (kcal >= 0) "+" else ""}${kcal.roundToInt()}"
+private fun signed(value: Double, decimals: Int = 0): String {
+    val sign = if (value >= 0) "+" else ""
+    return if (decimals == 0) "$sign${value.roundToInt()}" else "$sign${"%.${decimals}f".format(value)}"
+}
 
 @Composable
 private fun WeightChartCard(history: History) {
-    val points = history.trend.points
+    var range by remember { mutableStateOf(ChartRange.QUARTER) }
     SectionCard("Weight") {
+        val cutoff = LocalDate.now().minusDays(range.days.toLong())
+        val points = history.trend.points.filter { !it.date.isBefore(cutoff) }
+        // Offer a span only if there are weigh-ins old enough to fill it.
+        val weighInSpan = history.trend.points.firstOrNull()
+            ?.let { ChronoUnit.DAYS.between(it.date, LocalDate.now()).toInt() } ?: 0
+        RangeSelector(range, weighInSpan) { range = it }
+
         if (points.size < 2) {
-            Text("Two weigh-ins are needed to draw a line.", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Two weigh-ins in this range are needed to draw a line.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
             return@SectionCard
         }
         val all = points.flatMap { listOf(it.rawKg, it.trendKg) }
@@ -296,44 +344,66 @@ private fun WeightChartCard(history: History) {
         val firstDay = points.first().date.toEpochDay()
         val lastDay = points.last().date.toEpochDay()
         val daySpan = (lastDay - firstDay).coerceAtLeast(1)
-
-        // The kg bounds go beside the chart, heaviest at the top, because that is the axis
-        // they describe. Along the bottom they read as a start and an end, which is the
-        // opposite of what they mean.
         val chartHeight = 140.dp
-        VerticalAxis(
-            top = "%.1f kg".format(max),
-            bottom = "%.1f kg".format(min),
-            chartHeight = chartHeight,
-            below = { DateAxis(points.first().date, points.last().date) },
-        ) {
-            Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
-                fun x(day: Long) = ((day - firstDay).toFloat() / daySpan) * size.width
-                fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.9f +
-                    size.height * 0.05f
 
-                points.forEach { point ->
-                    drawCircle(
-                        color = Color.Gray,
-                        radius = 3f,
-                        center = Offset(x(point.date.toEpochDay()), y(point.rawKg)),
-                    )
-                }
-                for (i in 0 until points.size - 1) {
-                    val a = points[i]
-                    val b = points[i + 1]
-                    drawLine(
-                        color = TREND,
-                        start = Offset(x(a.date.toEpochDay()), y(a.trendKg)),
-                        end = Offset(x(b.date.toEpochDay()), y(b.trendKg)),
-                        strokeWidth = 4f,
-                    )
-                }
+        ScrubbableChart(
+            // Placed by date, not by position: weigh-ins are irregular, and spacing them
+            // evenly would put the marker on the wrong day.
+            xFractions = points.map { (it.date.toEpochDay() - firstDay).toFloat() / daySpan },
+            chartHeight = chartHeight,
+            axisTop = "%.1f kg".format(max),
+            axisBottom = "%.1f kg".format(min),
+            markerColor = MARKER,
+            below = { DateAxis(points.first().date, points.last().date) },
+            readout = { index ->
+                val point = points[index]
+                ChartReadout(
+                    title = chartDate(point.date),
+                    values = listOf(
+                        "On the scale" to "%.1f kg".format(point.rawKg),
+                        "Smoothed trend" to "%.1f kg".format(point.trendKg),
+                        "Since ${chartDate(points.first().date)}" to
+                            "${signed(point.trendKg - points.first().trendKg, 1)} kg",
+                    ),
+                )
+            },
+        ) { selected ->
+            fun x(day: Long) = ((day - firstDay).toFloat() / daySpan) * size.width
+            fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.9f +
+                size.height * 0.05f
+
+            points.forEachIndexed { index, point ->
+                drawCircle(
+                    color = Color.Gray,
+                    radius = if (index == selected) 6f else 3f,
+                    center = Offset(x(point.date.toEpochDay()), y(point.rawKg)),
+                )
             }
+            for (i in 0 until points.size - 1) {
+                val a = points[i]
+                val b = points[i + 1]
+                drawLine(
+                    color = TREND,
+                    start = Offset(x(a.date.toEpochDay()), y(a.trendKg)),
+                    end = Offset(x(b.date.toEpochDay()), y(b.trendKg)),
+                    strokeWidth = 4f,
+                )
+            }
+            drawCircle(
+                color = TREND,
+                radius = 6f,
+                center = Offset(
+                    x(points[selected].date.toEpochDay()),
+                    y(points[selected].trendKg),
+                ),
+            )
         }
         ChartLegend(listOf(Color.Gray to "Weigh-ins", TREND to "Smoothed trend"))
         Spacer(Modifier.height(4.dp))
-        Explainer("Grey dots are what the scale said; the line is the smoothed trend.")
+        Explainer(
+            "Drag across the chart to read any weigh-in. Grey dots are what the scale " +
+                "said; the line is the smoothed trend."
+        )
     }
 }
 

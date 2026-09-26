@@ -32,16 +32,19 @@ import nl.flwe.kcalwidget.data.weight.DivergencePoint
 import nl.flwe.kcalwidget.ui.MainViewModel
 import nl.flwe.kcalwidget.ui.components.ChartLegend
 import nl.flwe.kcalwidget.ui.components.ChoiceRow
+import nl.flwe.kcalwidget.ui.components.ChartReadout
 import nl.flwe.kcalwidget.ui.components.DateAxis
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.SectionCard
 import nl.flwe.kcalwidget.ui.components.StatRow
-import nl.flwe.kcalwidget.ui.components.VerticalAxis
+import nl.flwe.kcalwidget.ui.components.ScrubbableChart
+import nl.flwe.kcalwidget.ui.components.chartDate
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 private val PREDICTED = Color(0xFF3F51B5)
 private val ACTUAL = Color(0xFF1B5E20)
+private val MARKER = Color(0xFF616161)
 
 @Composable
 fun CalibrationScreen(viewModel: MainViewModel, onBack: () -> Unit) {
@@ -191,47 +194,71 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
         val span = (max - min).coerceAtLeast(0.5)
 
         val chartHeight = 160.dp
-        VerticalAxis(
-            top = "%.1f kg".format(max),
-            bottom = "%.1f kg".format(min),
+        ScrubbableChart(
+            xFractions = series.indices.map { it.toFloat() / (series.size - 1) },
             chartHeight = chartHeight,
+            axisTop = "%.1f kg".format(max),
+            axisBottom = "%.1f kg".format(min),
+            markerColor = MARKER,
             below = { DateAxis(series.first().date, series.last().date) },
-        ) {
-            Canvas(modifier = Modifier.fillMaxWidth().height(chartHeight)) {
-                fun x(index: Int) = index.toFloat() / (series.size - 1) * size.width
-                fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.88f +
-                    size.height * 0.06f
+            readout = { index ->
+                val point = series[index]
+                ChartReadout(
+                    title = chartDate(point.date),
+                    values = buildList {
+                        add("Predicted" to "%.1f kg".format(point.expectedKg))
+                        if (point.actualKg != null) {
+                            add("Measured" to "%.1f kg".format(point.actualKg))
+                            val gap = point.actualKg - point.expectedKg
+                            add(
+                                "Gap so far" to
+                                    "${if (gap >= 0) "+" else ""}${"%.2f".format(gap)} kg"
+                            )
+                        } else {
+                            add("Measured" to "no weigh-in")
+                        }
+                    },
+                )
+            },
+        ) { selected ->
+            fun x(index: Int) = index.toFloat() / (series.size - 1) * size.width
+            fun y(kg: Double) = (1f - ((kg - min) / span).toFloat()) * size.height * 0.88f +
+                size.height * 0.06f
 
-                // Predicted: a continuous line, because every day contributes to it.
-                for (i in 0 until series.size - 1) {
-                    drawLine(
-                        color = PREDICTED,
-                        start = Offset(x(i), y(series[i].expectedKg)),
-                        end = Offset(x(i + 1), y(series[i + 1].expectedKg)),
-                        strokeWidth = 4f,
-                    )
-                }
-
-                // Actual: only where it was measured, joined between weigh-ins.
-                val measured = series.withIndex().filter { it.value.actualKg != null }
-                for (i in 0 until measured.size - 1) {
-                    val (ai, a) = measured[i]
-                    val (bi, b) = measured[i + 1]
-                    drawLine(
-                        color = ACTUAL,
-                        start = Offset(x(ai), y(a.actualKg!!)),
-                        end = Offset(x(bi), y(b.actualKg!!)),
-                        strokeWidth = 5f,
-                    )
-                }
-                measured.forEach { (index, point) ->
-                    drawCircle(
-                        color = ACTUAL,
-                        radius = 5f,
-                        center = Offset(x(index), y(point.actualKg!!)),
-                    )
-                }
+            // Predicted: a continuous line, because every day contributes to it.
+            for (i in 0 until series.size - 1) {
+                drawLine(
+                    color = PREDICTED,
+                    start = Offset(x(i), y(series[i].expectedKg)),
+                    end = Offset(x(i + 1), y(series[i + 1].expectedKg)),
+                    strokeWidth = 4f,
+                )
             }
+
+            // Actual: only where it was measured, joined between weigh-ins.
+            val measured = series.withIndex().filter { it.value.actualKg != null }
+            for (i in 0 until measured.size - 1) {
+                val (ai, a) = measured[i]
+                val (bi, b) = measured[i + 1]
+                drawLine(
+                    color = ACTUAL,
+                    start = Offset(x(ai), y(a.actualKg!!)),
+                    end = Offset(x(bi), y(b.actualKg!!)),
+                    strokeWidth = 5f,
+                )
+            }
+            measured.forEach { (index, point) ->
+                drawCircle(
+                    color = ACTUAL,
+                    radius = if (index == selected) 8f else 5f,
+                    center = Offset(x(index), y(point.actualKg!!)),
+                )
+            }
+            drawCircle(
+                color = PREDICTED,
+                radius = 6f,
+                center = Offset(x(selected), y(series[selected].expectedKg)),
+            )
         }
         ChartLegend(
             listOf(
@@ -241,9 +268,11 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
         )
         Spacer(Modifier.height(8.dp))
         Explainer(
-            "Blue is what your food and burn numbers predict. Green is your smoothed " +
-                "weight. They start together; how far apart they end is the difference " +
-                "being measured."
+            "Drag across the chart to read any day. Blue is what your food and burn " +
+                "numbers predict; green is your smoothed weight. They start together; how " +
+                "far apart they end is the difference being measured. The span is the " +
+                "calibration window itself, so it is not adjustable: a shorter view would " +
+                "show a gap other than the one being measured."
         )
     }
 }

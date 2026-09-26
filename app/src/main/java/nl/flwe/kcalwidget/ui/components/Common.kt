@@ -1,6 +1,7 @@
 package nl.flwe.kcalwidget.ui.components
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -12,24 +13,34 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 
 /**
  * Labels the vertical range of a chart: highest value at the top, lowest at the bottom,
@@ -79,6 +90,167 @@ fun DateAxis(first: LocalDate, last: LocalDate) {
         Text(DAY_LABEL.format(last), style = MaterialTheme.typography.labelSmall)
     }
 }
+
+/**
+ * A chart you can scrub: drag or tap anywhere across it to pick a point, with a readout
+ * of whatever was picked.
+ *
+ * Every chart in the app answers a shape question well and a "what was it on Tuesday"
+ * question not at all, and the underlying numbers are already loaded -- they were simply
+ * not reachable. One implementation rather than three, because the hit-testing and the
+ * gesture handling are the fiddly parts and there is no reason to get them right
+ * repeatedly.
+ *
+ * [xFractions] is where each point sits across the width, 0..1, one entry per point. That
+ * is what makes this work for both evenly spaced series and the weight chart, whose points
+ * are placed by date and so are not evenly spaced at all.
+ */
+@Composable
+fun ScrubbableChart(
+    xFractions: List<Float>,
+    chartHeight: Dp,
+    axisTop: String,
+    axisBottom: String,
+    markerColor: Color,
+    axisMiddle: String? = null,
+    below: @Composable () -> Unit = {},
+    readout: @Composable (index: Int) -> Unit,
+    chart: DrawScope.(selected: Int) -> Unit,
+) {
+    if (xFractions.isEmpty()) return
+
+    // Opening on the newest point means there is always something in the readout; an
+    // empty one would just be a second thing to figure out.
+    var selected by remember(xFractions.size) { mutableIntStateOf(xFractions.lastIndex) }
+    val nearest: (Float, Int) -> Unit = { x, width ->
+        selected = nearestIndex(xFractions, if (width <= 0) 0f else x / width)
+    }
+
+    readout(selected.coerceIn(xFractions.indices))
+    Spacer(Modifier.height(6.dp))
+
+    VerticalAxis(
+        top = axisTop,
+        bottom = axisBottom,
+        middle = axisMiddle,
+        chartHeight = chartHeight,
+        below = below,
+    ) {
+        Canvas(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(chartHeight)
+                // Two blocks rather than one: a tap never travels far enough to trip the
+                // drag slop, so a single drag detector would ignore it.
+                .pointerInput(xFractions) {
+                    detectTapGestures { nearest(it.x, size.width) }
+                }
+                .pointerInput(xFractions) {
+                    detectHorizontalDragGestures(
+                        onDragStart = { nearest(it.x, size.width) },
+                    ) { change, _ ->
+                        nearest(change.position.x, size.width)
+                        // Claimed, so the list underneath does not also scroll sideways.
+                        change.consume()
+                    }
+                },
+        ) {
+            val index = selected.coerceIn(xFractions.indices)
+            chart(index)
+            drawLine(
+                color = markerColor,
+                start = Offset(xFractions[index] * size.width, 0f),
+                end = Offset(xFractions[index] * size.width, size.height),
+                strokeWidth = 2f,
+            )
+        }
+    }
+}
+
+/**
+ * Which point a touch at [fraction] of the way across the chart is pointing at.
+ *
+ * Nearest by position rather than by bucket: the weight chart places its points by date,
+ * so they are not evenly spaced and a divide-into-n-slots approach would pick the wrong
+ * day whenever weigh-ins are irregular, which is always.
+ */
+internal fun nearestIndex(xFractions: List<Float>, fraction: Float): Int {
+    if (xFractions.isEmpty()) return 0
+    val clamped = fraction.coerceIn(0f, 1f)
+    return xFractions.indices.minByOrNull { abs(xFractions[it] - clamped) } ?: 0
+}
+
+/**
+ * The header above a scrubbed chart: which point is selected, and what it was.
+ *
+ * Laid out so the values keep their position as the marker moves. A readout that reflows
+ * on every drag is unreadable while dragging, which is the only time it is on screen.
+ */
+@Composable
+fun ChartReadout(title: String, values: List<Pair<String, String>>) {
+    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 2.dp)) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(2.dp))
+        values.forEach { (label, value) ->
+            Row(modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    value,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = FontWeight.Medium,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * How much history a chart shows.
+ *
+ * The full ninety days are already in memory, so this is purely a matter of what is drawn:
+ * a quarter's worth of bars is four pixels wide each and answers nothing about last week.
+ */
+enum class ChartRange(val days: Int, val label: String) {
+    WEEK(7, "7 days"),
+    MONTH(30, "30 days"),
+    QUARTER(90, "90 days"),
+}
+
+/**
+ * Picks the span a chart covers. Ranges longer than the data are left out rather than
+ * offered and then silently clamped.
+ */
+@Composable
+fun RangeSelector(selected: ChartRange, available: Int, onSelect: (ChartRange) -> Unit) {
+    // Always keep the shortest span and whatever is currently chosen, so the chips can
+    // never disagree with what the chart is actually showing.
+    val offered = ChartRange.entries.filter {
+        it == ChartRange.entries.first() || it == selected || it.days <= available
+    }
+    if (offered.size < 2) return
+
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        offered.forEach { range ->
+            FilterChip(
+                selected = range == selected,
+                onClick = { onSelect(range) },
+                label = { Text(range.label, style = MaterialTheme.typography.labelMedium) },
+            )
+        }
+    }
+}
+
+/** Formats a date for a chart readout. */
+fun chartDate(date: LocalDate): String = READOUT_DATE.format(date)
+
+private val READOUT_DATE = DateTimeFormatter.ofPattern("EEE d MMM")
 
 /** A colour swatch and what it means, so a two-series chart can be read without guessing. */
 @Composable
