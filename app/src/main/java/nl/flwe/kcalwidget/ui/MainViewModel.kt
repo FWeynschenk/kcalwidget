@@ -20,6 +20,7 @@ import nl.flwe.kcalwidget.data.DayWindow
 import nl.flwe.kcalwidget.data.Energetics
 import nl.flwe.kcalwidget.data.HealthAvailability
 import nl.flwe.kcalwidget.data.history.Banking
+import nl.flwe.kcalwidget.data.history.ResolvedCarry
 import nl.flwe.kcalwidget.data.history.CarryState
 import nl.flwe.kcalwidget.data.settings.BankingState
 import nl.flwe.kcalwidget.data.HealthRepository
@@ -77,6 +78,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var baseline: TdeeBaseline? = null
     private var history: History? = null
 
+    /** Resolved once per read and reused, so a settings change does not re-derive it. */
+    private var carry: ResolvedCarry = ResolvedCarry.OFF
+
     private var loadJob: Job? = null
     private var commitJob: Job? = null
 
@@ -110,7 +114,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // Only the short banking window is read on every resume. The full
                     // 90-day history is a much heavier query and is fetched on demand by
                     // the History screen, so opening the app stays quick.
-                    history = if (hasPermissions && settings.goal.useWeeklyBanking) {
+                    //
+                    // It is deliberately kept out of the history the screens draw from.
+                    // Seven days is plenty for a carry and nowhere near enough for a
+                    // weight trend: letting it overwrite the full read turned the history
+                    // chart into four days and re-fitted the forecast off a handful of
+                    // weigh-ins, silently, on every resume.
+                    bankingHistory = if (hasPermissions && settings.goal.useWeeklyBanking) {
                         historyRepo.load(settings, HistoryRepository.BANKING_DAYS + 1)
                     } else {
                         null
@@ -125,18 +135,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             snapshot = read.snapshot
             baseline = read.baseline
-            history = read.history
 
             // A read that comes back short must not read as a week that came out even.
             val today = DayWindow.currentStart(settings.calculation.dayStartHour).toLocalDate()
-            val carry = Banking.resolve(
-                fresh = read.history?.carry,
+            val resolved = Banking.resolve(
+                fresh = read.bankingHistory?.carry,
                 remembered = settings.banking,
                 today = today,
                 enabled = settings.goal.useWeeklyBanking,
             )
-            if (carry.state == CarryState.FRESH) {
-                val remembered = BankingState(carry.kcal, today.toEpochDay())
+            carry = resolved
+            if (resolved.state == CarryState.FRESH) {
+                val remembered = BankingState(resolved.kcal, today.toEpochDay())
                 if (remembered != settings.banking) {
                     settingsRepo.update { it.copy(banking = remembered) }
                 }
@@ -156,11 +166,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         settings,
                         elapsedToday(settings),
                         read.baseline,
-                        carry,
+                        resolved,
                     )
                 },
                 sourceCatalog = _state.value.sourceCatalog,
-                history = read.history ?: _state.value.history,
+                history = _state.value.history,
             )
             runCatching { WidgetRepository.refresh(getApplication()) }
         }
@@ -189,13 +199,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         next,
                         elapsedToday(next),
                         baseline,
-                        Banking.resolve(
-                            fresh = history?.carry,
-                            remembered = next.banking,
-                            today = DayWindow.currentStart(next.calculation.dayStartHour)
-                                .toLocalDate(),
-                            enabled = next.goal.useWeeklyBanking,
-                        ),
+                        carry,
                     )
                 },
             )
@@ -247,7 +251,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 // Keep it even with zero rows: the diagnostics inside are the whole point
                 // when there is nothing else to show.
-                if (loaded != null) history = loaded
+                if (loaded != null) {
+                    history = loaded
+                    // A ninety-day read contains the banking window, and is the better
+                    // source for it.
+                    val today = DayWindow.currentStart(settings.calculation.dayStartHour)
+                        .toLocalDate()
+                    carry = Banking.resolve(
+                        fresh = loaded.carry,
+                        remembered = settings.banking,
+                        today = today,
+                        enabled = settings.goal.useWeeklyBanking,
+                    )
+                }
                 val analysis = Calibration.analyse(loaded ?: history, settings.calibration)
                 _state.update {
                     it.copy(
@@ -367,7 +383,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val hasHistoryPermission: Boolean,
         val snapshot: HealthSnapshot?,
         val baseline: TdeeBaseline?,
-        val history: History?,
+        val bankingHistory: History?,
     )
 
     private companion object {
