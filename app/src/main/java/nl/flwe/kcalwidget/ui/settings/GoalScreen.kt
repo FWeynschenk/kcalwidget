@@ -102,9 +102,11 @@ fun GoalScreen(viewModel: MainViewModel, onBack: () -> Unit) {
                     )
                 }
                 Explainer(
-                    "With this on, a restrained few days pays for a big one. Today's budget " +
-                        "carries in the past six days' surplus or deficit, capped at 700 kcal " +
-                        "either way so one heavy day cannot swallow the whole week."
+                    "With this on, a big day is paid for over the following week: the past " +
+                        "six days' overspend comes off today's budget, capped at 700 kcal so " +
+                        "one heavy day cannot swallow the week. It only ever tightens. A week " +
+                        "that comes in under is reported as spare rather than added on, so a " +
+                        "good run does not quietly raise the bar the next day."
                 )
             }
         }
@@ -206,7 +208,7 @@ private fun TargetWeightCard(viewModel: MainViewModel, trendKg: Double, heightCm
             Spacer(Modifier.height(8.dp))
             StatRow("To go", "${"%.1f".format(abs(target - trendKg))} kg")
             if (weeks != null) {
-                StatRow("At this rate", "about ${weeks.roundToInt()} weeks")
+                StatRow("At your chosen rate", "about ${weeks.roundToInt()} weeks")
             } else if (direction != GoalDirection.MAINTAIN) {
                 Text(
                     "Your rate is pointing away from this target.",
@@ -260,6 +262,11 @@ private fun ForecastCard(history: History?, settings: AppSettings) {
             return@SectionCard
         }
 
+        Explainer(
+            "Built from what has actually been happening, not from the rate you chose, so " +
+                "it will differ from the figure above whenever the two are apart."
+        )
+        Spacer(Modifier.height(8.dp))
         listOf(4L, 12L).forEach { weeks ->
             val point = forecast.at(LocalDate.now().plusDays(weeks * 7))
             if (point != null) {

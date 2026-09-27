@@ -180,12 +180,19 @@ private fun BudgetBreakdown(energy: DayEnergy) {
         label = if (goal == 0) "Goal (maintain)" else "Goal",
         value = "${signed(goal)} kcal",
     )
-    if (energy.bankingApplied) {
+    // Only the carry that actually moved the budget belongs in the sum. Listing a
+    // withheld credit here makes the column stop adding up, which defeats the point of
+    // breaking the budget out in the first place; the spare gets its own line below.
+    if (energy.bankingApplied && !energy.hasWeeklySpare && carry != 0) {
         StatRow("Carried from the past week", "${signed(carry)} kcal")
     }
     StatRow("Budget", "${energy.budgetKcal.roundToInt()} kcal")
     if (energy.hasWeeklySpare) {
-        StatRow("Spare this week", "${signed(energy.weeklySpareKcal.roundToInt())} kcal")
+        Spacer(Modifier.height(4.dp))
+        StatRow(
+            label = "Spare this week, not in today's budget",
+            value = "${signed(energy.weeklySpareKcal.roundToInt())} kcal",
+        )
     }
 }
 
