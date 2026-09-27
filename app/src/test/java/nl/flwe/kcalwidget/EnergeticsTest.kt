@@ -2,6 +2,8 @@ package nl.flwe.kcalwidget
 
 import nl.flwe.kcalwidget.data.BurnSource
 import nl.flwe.kcalwidget.data.Energetics
+import nl.flwe.kcalwidget.data.history.CarryState
+import nl.flwe.kcalwidget.data.history.ResolvedCarry
 import nl.flwe.kcalwidget.data.HealthSnapshot
 import nl.flwe.kcalwidget.data.TdeeBaseline
 import nl.flwe.kcalwidget.data.settings.AppSettings
@@ -375,7 +377,7 @@ class EnergeticsTest {
             settings,
             halfDay,
             flatBaseline,
-            bankedAdjustmentKcal = 500.0,
+            carry = ResolvedCarry(500.0, CarryState.FRESH),
         )
         val without = Energetics.compute(snapshot(total = 1400.0), settings, halfDay, flatBaseline)
         assertEquals(without.budgetKcal, withBank.budgetKcal, 0.001)
@@ -383,26 +385,94 @@ class EnergeticsTest {
     }
 
     @Test
-    fun `banking carries the week's surplus into today`() {
+    fun `an overspent week tightens today`() {
         val banking = settings.copy(goal = settings.goal.copy(useWeeklyBanking = true))
         val plain = Energetics.compute(snapshot(total = 1400.0), banking, halfDay, flatBaseline)
-        val credited = Energetics.compute(
-            snapshot(total = 1400.0),
-            banking,
-            halfDay,
-            flatBaseline,
-            bankedAdjustmentKcal = 500.0,
-        )
-        assertEquals(plain.budgetKcal + 500.0, credited.budgetKcal, 0.001)
-
         val owed = Energetics.compute(
             snapshot(total = 1400.0),
             banking,
             halfDay,
             flatBaseline,
-            bankedAdjustmentKcal = -400.0,
+            carry = ResolvedCarry(-400.0, CarryState.FRESH),
         )
         assertEquals(plain.budgetKcal - 400.0, owed.budgetKcal, 0.001)
+        assertEquals(0.0, owed.weeklySpareKcal, 0.001)
+    }
+
+    @Test
+    fun `a week in credit does not raise today's budget, it is reported instead`() {
+        // Losing weight: the headline stays on the daily goal, and the week's room is
+        // stated so it can be spent deliberately rather than drifted into.
+        val banking = settings.copy(goal = settings.goal.copy(useWeeklyBanking = true))
+        val plain = Energetics.compute(snapshot(total = 1400.0), banking, halfDay, flatBaseline)
+        val credit = Energetics.compute(
+            snapshot(total = 1400.0),
+            banking,
+            halfDay,
+            flatBaseline,
+            carry = ResolvedCarry(500.0, CarryState.FRESH),
+        )
+        assertEquals(plain.budgetKcal, credit.budgetKcal, 0.001)
+        assertEquals(500.0, credit.weeklySpareKcal, 0.001)
+        assertTrue(credit.hasWeeklySpare)
+    }
+
+    @Test
+    fun `gaining is the mirror image, so credit does raise the budget`() {
+        val gaining = settings.copy(
+            goal = settings.goal.copy(weeklyChangeKg = 0.25, useWeeklyBanking = true),
+        )
+        val plain = Energetics.compute(snapshot(total = 1400.0), gaining, halfDay, flatBaseline)
+        // Behind on a gain goal: eat more, which is the direction of the goal.
+        val behind = Energetics.compute(
+            snapshot(total = 1400.0),
+            gaining,
+            halfDay,
+            flatBaseline,
+            carry = ResolvedCarry(500.0, CarryState.FRESH),
+        )
+        assertEquals(plain.budgetKcal + 500.0, behind.budgetKcal, 0.001)
+
+        // Ahead of it: the headline holds rather than shrinking.
+        val ahead = Energetics.compute(
+            snapshot(total = 1400.0),
+            gaining,
+            halfDay,
+            flatBaseline,
+            carry = ResolvedCarry(-400.0, CarryState.FRESH),
+        )
+        assertEquals(plain.budgetKcal, ahead.budgetKcal, 0.001)
+    }
+
+    @Test
+    fun `an unreadable carry does not silently become a week that came out even`() {
+        // The afternoon flip: with the carry lost, the old code dropped a 700 kcal penalty
+        // and the budget leapt. An unavailable carry must never be credited as zero.
+        val banking = settings.copy(goal = settings.goal.copy(useWeeklyBanking = true))
+        val unavailable = Energetics.compute(
+            snapshot(total = 1400.0),
+            banking,
+            halfDay,
+            flatBaseline,
+            carry = ResolvedCarry(0.0, CarryState.UNAVAILABLE),
+        )
+        assertEquals(CarryState.UNAVAILABLE, unavailable.carryState)
+        assertTrue("an unknown carry must not claim banking was applied", !unavailable.bankingApplied)
+    }
+
+    @Test
+    fun `a remembered carry keeps the penalty in place`() {
+        val banking = settings.copy(goal = settings.goal.copy(useWeeklyBanking = true))
+        val plain = Energetics.compute(snapshot(total = 1400.0), banking, halfDay, flatBaseline)
+        val stale = Energetics.compute(
+            snapshot(total = 1400.0),
+            banking,
+            halfDay,
+            flatBaseline,
+            carry = ResolvedCarry(-700.0, CarryState.STALE),
+        )
+        assertEquals(plain.budgetKcal - 700.0, stale.budgetKcal, 0.001)
+        assertTrue(stale.bankingApplied)
     }
 
     @Test

@@ -82,6 +82,20 @@ class KcalWidget : GlanceAppWidget() {
                                 }
                             }
                             Spacer(GlanceModifier.height(6.dp))
+                            // Stated, never folded into the headline: the budget above is
+                            // the daily goal, and this is the week's room to spend on
+                            // purpose rather than by drifting into it.
+                            if (model.hasWeeklySpare) {
+                                Text(
+                                    text = "+${model.weeklySpareKcal.roundToInt()} kcal " +
+                                        "spare this week, not in today's goal",
+                                    style = TextStyle(
+                                        fontSize = 11.sp,
+                                        color = GlanceTheme.colors.onSurfaceVariant,
+                                    ),
+                                )
+                                Spacer(GlanceModifier.height(4.dp))
+                            }
                             if (model.weighInDue) {
                                 WeighInNudge(model)
                             } else {

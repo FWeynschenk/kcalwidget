@@ -18,6 +18,7 @@ data class AppSettings(
     val features: FeatureFlags = FeatureFlags(),
     val calibration: CalibrationState = CalibrationState(),
     val reminders: ReminderState = ReminderState(),
+    val banking: BankingState = BankingState(),
     val onboardingCompleted: Boolean = false,
 )
 
@@ -41,6 +42,16 @@ enum class GoalMode {
     /** The user sets a target weight; the rate carries them towards it. */
     TARGET_WEIGHT,
 }
+
+/**
+ * The last carry that was actually readable, so a failed read does not read as zero.
+ * Written whenever a real one is computed; see Banking.resolve for why.
+ */
+data class BankingState(
+    val lastCarryKcal: Double? = null,
+    /** The logical day it was computed for, as an epoch day. */
+    val lastCarryDay: Long? = null,
+)
 
 data class GoalSettings(
     val mode: GoalMode = GoalMode.RATE,

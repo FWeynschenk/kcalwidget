@@ -40,6 +40,7 @@ object WidgetKeys {
     val DAYS_SINCE_WEIGH_IN = intPreferencesKey("days_since_weigh_in")
     val WEIGH_IN_DUE = booleanPreferencesKey("weigh_in_due")
     val GOAL_DELTA = doublePreferencesKey("goal_delta")
+    val WEEKLY_SPARE = doublePreferencesKey("weekly_spare")
     val NET_SERIES = stringPreferencesKey("net_series")
     val WEIGHT_SERIES = stringPreferencesKey("weight_series")
     val UPDATED_AT = longPreferencesKey("updated_at")
@@ -73,11 +74,16 @@ internal data class WidgetModel(
     val weighInDue: Boolean,
     /** The goal's daily allowance, so the trend chart can draw the line it is judged against. */
     val goalDeltaKcal: Double,
+    /** Room the week has that today's budget is deliberately not spending. */
+    val weeklySpareKcal: Double,
     val netSeries: List<Double>,
     val weightSeries: List<Double>,
     val updatedAt: Long,
 ) {
     val isOver: Boolean get() = remaining < 0
+
+    /** True when the week has room today's budget is deliberately not spending. */
+    val hasWeeklySpare: Boolean get() = weeklySpareKcal >= 1.0
 
     val accentPair: Pair<Color, Color>
         get() = when {
@@ -139,6 +145,7 @@ internal fun Preferences.toWidgetModel(): WidgetModel = WidgetModel(
     daysSinceWeighIn = this[WidgetKeys.DAYS_SINCE_WEIGH_IN],
     weighInDue = this[WidgetKeys.WEIGH_IN_DUE] ?: false,
     goalDeltaKcal = this[WidgetKeys.GOAL_DELTA] ?: 0.0,
+    weeklySpareKcal = this[WidgetKeys.WEEKLY_SPARE] ?: 0.0,
     netSeries = this[WidgetKeys.NET_SERIES].toSeries(),
     weightSeries = this[WidgetKeys.WEIGHT_SERIES].toSeries(),
     updatedAt = this[WidgetKeys.UPDATED_AT] ?: 0L,

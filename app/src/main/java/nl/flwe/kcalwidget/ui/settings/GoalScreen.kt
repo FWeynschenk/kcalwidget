@@ -11,6 +11,8 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -22,7 +24,13 @@ import nl.flwe.kcalwidget.data.settings.GoalDirection
 import nl.flwe.kcalwidget.data.settings.GoalMode
 import nl.flwe.kcalwidget.data.weight.Bmi
 import nl.flwe.kcalwidget.data.weight.WeightGoal
+import nl.flwe.kcalwidget.data.history.History
+import nl.flwe.kcalwidget.data.settings.AppSettings
+import nl.flwe.kcalwidget.data.weight.WeightForecast
+import nl.flwe.kcalwidget.data.weight.weeksBetween
 import nl.flwe.kcalwidget.ui.MainViewModel
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
 import nl.flwe.kcalwidget.ui.components.ChoiceRow
 import nl.flwe.kcalwidget.ui.components.Explainer
 import nl.flwe.kcalwidget.ui.components.NumberField
@@ -43,6 +51,10 @@ fun GoalScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     val trendKg = state.history?.trend?.currentTrendKg
         ?: state.energy?.weightKg
         ?: state.settings.body.fallbackWeightKg
+
+    // The forecast needs past days, and those are only read automatically when banking
+    // is on. Without this the card is permanently empty for everyone else.
+    LaunchedEffect(Unit) { viewModel.loadHistory() }
 
     SettingsScaffold("Goal", onBack) {
         item { WhereYouAreCard(trendKg, heightCm, state.history?.trend?.weeklyChangeKg) }
@@ -69,6 +81,7 @@ fun GoalScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             item { TargetWeightCard(viewModel, trendKg, heightCm) }
         }
 
+        item { ForecastCard(state.history, state.settings) }
         item { RateCard(viewModel, trendKg) }
 
         item {
@@ -220,6 +233,103 @@ private fun TargetWeightCard(viewModel: MainViewModel, trendKg: Double, heightCm
         }
     }
 }
+
+/**
+ * Where the weight is heading, as a band rather than a promise.
+ *
+ * Two methods, deliberately both shown: the scale fitted over recent weeks, which is
+ * ground truth but cannot know about a change made this week, and the calorie balance,
+ * which can but is only as good as the logging. When they agree the range is tight and
+ * worth acting on; when they disagree the width is the useful part, and picking one to
+ * display would be inventing confidence.
+ */
+@Composable
+private fun ForecastCard(history: History?, settings: AppSettings) {
+    val forecast = remember(history, settings) {
+        history?.let {
+            WeightForecast.from(it.trend, it.rows, settings, LocalDate.now())
+        }
+    }
+
+    SectionCard("Where this is heading") {
+        if (forecast == null) {
+            Text(
+                "A few weigh-ins are needed before anything can be predicted.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            return@SectionCard
+        }
+
+        listOf(4L, 12L).forEach { weeks ->
+            val point = forecast.at(LocalDate.now().plusDays(weeks * 7))
+            if (point != null) {
+                StatRow(
+                    label = "In $weeks weeks",
+                    value = if (forecast.hasBand) {
+                        "%.1f–%.1f kg".format(point.lowKg, point.highKg)
+                    } else {
+                        "%.1f kg".format(point.midKg)
+                    },
+                )
+            }
+        }
+
+        val target = forecast.targetKg
+        val range = forecast.targetRange
+        Spacer(Modifier.height(8.dp))
+        when {
+            target == null -> Explainer(
+                "Set a target weight above and this will say when you would reach it."
+            )
+            range == null -> Explainer(
+                "At the moment nothing here reaches ${"%.1f".format(target)} kg: either the " +
+                    "rate is too small to project, or it is pointing the other way."
+            )
+            else -> {
+                val (first, last) = range
+                StatRow(
+                    label = "Reaching ${"%.1f".format(target)} kg",
+                    value = if (first == last) {
+                        FORECAST_DATE.format(first)
+                    } else {
+                        "${FORECAST_DATE.format(first)} – ${FORECAST_DATE.format(last)}"
+                    },
+                )
+                Spacer(Modifier.height(8.dp))
+                Explainer(
+                    buildString {
+                        append("That is about ${weeksBetween(LocalDate.now(), first)} weeks ")
+                        append("at the faster of the two readings")
+                        if (first != last) {
+                            append(", ${weeksBetween(LocalDate.now(), last)} at the slower")
+                        }
+                        append(". ")
+                        val gap = forecast.disagreementKgPerWeek
+                        append(
+                            when {
+                                gap == null ->
+                                    "Only one method has enough data so far, so there is no " +
+                                        "range to compare against."
+                                gap < 0.1 ->
+                                    "Your scale and your calorie numbers agree closely, so " +
+                                        "this is about as firm as a forecast gets."
+                                gap < 0.3 ->
+                                    "Your scale and your calorie numbers disagree a little, " +
+                                        "which is normal."
+                                else ->
+                                    "Your scale and your calorie numbers disagree by " +
+                                        "${"%.2f".format(gap)} kg a week, so treat the range " +
+                                        "as wide. Calibration is what narrows it."
+                            }
+                        )
+                    }
+                )
+            }
+        }
+    }
+}
+
+private val FORECAST_DATE = DateTimeFormatter.ofPattern("d MMM yyyy")
 
 @Composable
 private fun RateCard(viewModel: MainViewModel, trendKg: Double) {

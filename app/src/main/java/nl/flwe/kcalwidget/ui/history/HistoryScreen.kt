@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -34,6 +35,7 @@ import nl.flwe.kcalwidget.data.history.BankedCarry
 import nl.flwe.kcalwidget.data.history.DayRow
 import nl.flwe.kcalwidget.data.history.History
 import nl.flwe.kcalwidget.data.settings.AppSettings
+import nl.flwe.kcalwidget.data.weight.WeightForecast
 import nl.flwe.kcalwidget.ui.MainViewModel
 import nl.flwe.kcalwidget.ui.components.ChartLegend
 import nl.flwe.kcalwidget.ui.components.ChartRange
@@ -58,6 +60,7 @@ private val UNDER = Color(0xFF1B5E20)
 private val TREND = Color(0xFF3F51B5)
 private val TARGET = Color(0xFF8E24AA)
 private val MARKER = Color(0xFF616161)
+private val FORECAST = Color(0xFF00897B)
 
 private val DAY_LABEL = DateTimeFormatter.ofPattern("d MMM")
 
@@ -101,7 +104,7 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         if (state.settings.goal.useWeeklyBanking) {
             item { CarryCard(history.carry) }
         }
-        item { WeightChartCard(history) }
+        item { WeightChartCard(history, state.settings) }
         item { ExportCard(history) }
         item {
             SectionCard("Days") {
@@ -311,8 +314,10 @@ private fun CarryCard(carry: BankedCarry) {
         Explainer(
             buildString {
                 append("Each day is its burn plus your goal, minus what you ate, so a ")
-                append("positive day left something over. They add up to ")
-                append("${signed(carry.rawTotalKcal)} kcal")
+                append("positive day left something over. A negative total tightens today's ")
+                append("budget; a positive one is reported as spare rather than spent, so a ")
+                append("good week does not quietly raise the bar on the next day. They add ")
+                append("up to ${signed(carry.rawTotalKcal)} kcal")
                 if (carry.capped) {
                     // Without the sign this reads as a cap of +700 on a negative carry.
                     append(", capped to ${signed(carry.totalKcal)} ")
@@ -331,14 +336,15 @@ private fun signed(value: Double, decimals: Int = 0): String {
 }
 
 @Composable
-private fun WeightChartCard(history: History) {
+private fun WeightChartCard(history: History, settings: AppSettings) {
     var range by remember { mutableStateOf(ChartRange.QUARTER) }
     SectionCard("Weight") {
-        val cutoff = LocalDate.now().minusDays(range.days.toLong())
+        val today = LocalDate.now()
+        val cutoff = today.minusDays(range.days.toLong())
         val points = history.trend.points.filter { !it.date.isBefore(cutoff) }
         // Offer a span only if there are weigh-ins old enough to fill it.
         val weighInSpan = history.trend.points.firstOrNull()
-            ?.let { ChronoUnit.DAYS.between(it.date, LocalDate.now()).toInt() } ?: 0
+            ?.let { ChronoUnit.DAYS.between(it.date, today).toInt() } ?: 0
         RangeSelector(range, weighInSpan) { range = it }
 
         if (points.size < 2) {
@@ -348,74 +354,141 @@ private fun WeightChartCard(history: History) {
             )
             return@SectionCard
         }
-        val all = points.flatMap { listOf(it.rawKg, it.trendKg) }
+
+        // The forecast is sampled weekly: a daily band is a hundred points nobody can
+        // scrub to, and weekly steps land on the marks people actually ask about.
+        val forecast = remember(history, settings) {
+            WeightForecast.from(history.trend, history.rows, settings, today)
+        }
+        val future = forecast?.points.orEmpty().filter {
+            ChronoUnit.DAYS.between(today, it.date).let { d -> d > 0 && d % 7 == 0L }
+        }
+
+        val all = points.flatMap { listOf(it.rawKg, it.trendKg) } +
+            future.flatMap { listOf(it.lowKg, it.highKg) }
         val min = all.min()
         val max = all.max()
         val span = (max - min).coerceAtLeast(0.5)
         val firstDay = points.first().date.toEpochDay()
-        val lastDay = points.last().date.toEpochDay()
+        val lastDay = (future.lastOrNull()?.date ?: points.last().date).toEpochDay()
         val daySpan = (lastDay - firstDay).coerceAtLeast(1)
         fun frac(kg: Double) = (1f - ((kg - min) / span).toFloat()) * 0.9f + 0.05f
         val chartHeight = 140.dp
 
+        // Past and future in one series, so one marker walks the whole chart.
+        val marks = points.map { it.date } + future.map { it.date }
+
         ScrubbableChart(
             // Placed by date, not by position: weigh-ins are irregular, and spacing them
             // evenly would put the marker on the wrong day.
-            xFractions = points.map { (it.date.toEpochDay() - firstDay).toFloat() / daySpan },
+            xFractions = marks.map { (it.toEpochDay() - firstDay).toFloat() / daySpan },
             chartHeight = chartHeight,
             axisLabels = listOf(
                 frac(max) to "%.1f kg".format(max),
                 frac(min) to "%.1f kg".format(min),
             ),
             markerColor = MARKER,
-            below = { DateAxis(points.first().date, points.last().date) },
+            below = { DateAxis(points.first().date, marks.last()) },
             readout = { index ->
-                val point = points[index]
-                ChartReadout(
-                    title = chartDate(point.date),
-                    values = listOf(
-                        "On the scale" to "%.1f kg".format(point.rawKg),
-                        "Smoothed trend" to "%.1f kg".format(point.trendKg),
-                        "Since ${chartDate(points.first().date)}" to
-                            "${signed(point.trendKg - points.first().trendKg, 1)} kg",
-                    ),
-                )
+                if (index < points.size) {
+                    val point = points[index]
+                    ChartReadout(
+                        title = chartDate(point.date),
+                        values = listOf(
+                            "On the scale" to "%.1f kg".format(point.rawKg),
+                            "Smoothed trend" to "%.1f kg".format(point.trendKg),
+                            "Since ${chartDate(points.first().date)}" to
+                                "${signed(point.trendKg - points.first().trendKg, 1)} kg",
+                        ),
+                    )
+                } else {
+                    val point = future[index - points.size]
+                    val weeks = ChronoUnit.DAYS.between(today, point.date) / 7
+                    ChartReadout(
+                        title = "${chartDate(point.date)} — predicted",
+                        values = listOf(
+                            "In" to "$weeks weeks",
+                            "Range" to "%.1f–%.1f kg".format(point.lowKg, point.highKg),
+                            "Midpoint" to "%.1f kg".format(point.midKg),
+                        ),
+                    )
+                }
             },
         ) { selected ->
-            fun x(day: Long) = ((day - firstDay).toFloat() / daySpan) * size.width
+            fun x(date: LocalDate) =
+                ((date.toEpochDay() - firstDay).toFloat() / daySpan) * size.width
             fun y(kg: Double) = frac(kg) * size.height
+
+            // The band first, so the lines sit on top of it.
+            if (future.isNotEmpty()) {
+                val last = points.last()
+                val band = Path().apply {
+                    moveTo(x(last.date), y(last.trendKg))
+                    future.forEach { lineTo(x(it.date), y(it.highKg)) }
+                    future.reversed().forEach { lineTo(x(it.date), y(it.lowKg)) }
+                    close()
+                }
+                drawPath(band, color = FORECAST, alpha = 0.18f)
+
+                var from = Offset(x(last.date), y(last.trendKg))
+                future.forEach { point ->
+                    val to = Offset(x(point.date), y(point.midKg))
+                    drawLine(
+                        color = FORECAST,
+                        start = from,
+                        end = to,
+                        strokeWidth = 4f,
+                        pathEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f)),
+                    )
+                    from = to
+                }
+            }
 
             points.forEachIndexed { index, point ->
                 drawCircle(
                     color = Color.Gray,
                     radius = if (index == selected) 6f else 3f,
-                    center = Offset(x(point.date.toEpochDay()), y(point.rawKg)),
+                    center = Offset(x(point.date), y(point.rawKg)),
                 )
             }
             for (i in 0 until points.size - 1) {
-                val a = points[i]
-                val b = points[i + 1]
                 drawLine(
                     color = TREND,
-                    start = Offset(x(a.date.toEpochDay()), y(a.trendKg)),
-                    end = Offset(x(b.date.toEpochDay()), y(b.trendKg)),
+                    start = Offset(x(points[i].date), y(points[i].trendKg)),
+                    end = Offset(x(points[i + 1].date), y(points[i + 1].trendKg)),
                     strokeWidth = 4f,
                 )
             }
+
+            val marked = if (selected < points.size) {
+                Offset(x(points[selected].date), y(points[selected].trendKg))
+            } else {
+                val point = future[selected - points.size]
+                Offset(x(point.date), y(point.midKg))
+            }
             drawCircle(
-                color = TREND,
+                color = if (selected < points.size) TREND else FORECAST,
                 radius = 6f,
-                center = Offset(
-                    x(points[selected].date.toEpochDay()),
-                    y(points[selected].trendKg),
-                ),
+                center = marked,
             )
         }
-        ChartLegend(listOf(Color.Gray to "Weigh-ins", TREND to "Smoothed trend"))
+        ChartLegend(
+            buildList {
+                add(Color.Gray to "Weigh-ins")
+                add(TREND to "Smoothed trend")
+                if (future.isNotEmpty()) add(FORECAST to "Predicted")
+            }
+        )
         Spacer(Modifier.height(4.dp))
         Explainer(
-            "Drag across the chart to read any weigh-in. Grey dots are what the scale " +
-                "said; the line is the smoothed trend."
+            if (future.isEmpty()) {
+                "Drag across the chart to read any weigh-in. Grey dots are what the scale " +
+                    "said; the line is the smoothed trend."
+            } else {
+                "Drag across the chart to read any weigh-in, or any week ahead. The shaded " +
+                    "band is where your scale and your calorie numbers each say you are " +
+                    "heading; its width is how much they disagree, not a margin of error."
+            }
         )
     }
 }
