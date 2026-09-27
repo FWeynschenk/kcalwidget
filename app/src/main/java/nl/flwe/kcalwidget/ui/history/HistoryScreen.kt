@@ -62,6 +62,9 @@ private val TARGET = Color(0xFF8E24AA)
 private val MARKER = Color(0xFF616161)
 private val FORECAST = Color(0xFF00897B)
 
+/** About this many forecast marks, whatever the span being shown. */
+private const val FORECAST_MARKS = 12L
+
 private val DAY_LABEL = DateTimeFormatter.ofPattern("d MMM")
 
 /**
@@ -152,7 +155,7 @@ private fun NetChartCard(history: History, settings: AppSettings) {
     val gaining = target > 0
 
     SectionCard("Net balance") {
-        RangeSelector(range, history.rows.size) { range = it }
+        RangeSelector(range) { range = it }
 
         if (nets.none { it != null }) {
             Text("No complete days in this range.", style = MaterialTheme.typography.bodyMedium)
@@ -342,10 +345,7 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
         val today = LocalDate.now()
         val cutoff = today.minusDays(range.days.toLong())
         val points = history.trend.points.filter { !it.date.isBefore(cutoff) }
-        // Offer a span only if there are weigh-ins old enough to fill it.
-        val weighInSpan = history.trend.points.firstOrNull()
-            ?.let { ChronoUnit.DAYS.between(it.date, today).toInt() } ?: 0
-        RangeSelector(range, weighInSpan) { range = it }
+        RangeSelector(range) { range = it }
 
         if (points.size < 2) {
             Text(
@@ -355,13 +355,18 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
             return@SectionCard
         }
 
-        // The forecast is sampled weekly: a daily band is a hundred points nobody can
-        // scrub to, and weekly steps land on the marks people actually ask about.
-        val forecast = remember(history, settings) {
-            WeightForecast.from(history.trend, history.rows, settings, today)
+        // Look forward as far as you are looking back. A fixed twelve-week horizon against
+        // a seven-day range gave the history eight percent of the width, which is not a
+        // chart of the last week in any useful sense.
+        val horizon = range.days.toLong().coerceAtMost(WeightForecast.HORIZON_DAYS)
+        val forecast = remember(history, settings, horizon) {
+            WeightForecast.from(history.trend, history.rows, settings, today, horizon)
         }
+        // Roughly a dozen marks whatever the span, so a short range is not one lonely
+        // point and a long one is not a wall of them.
+        val step = ((horizon + FORECAST_MARKS - 1) / FORECAST_MARKS).coerceAtLeast(1L)
         val future = forecast?.points.orEmpty().filter {
-            ChronoUnit.DAYS.between(today, it.date).let { d -> d > 0 && d % 7 == 0L }
+            ChronoUnit.DAYS.between(today, it.date).let { d -> d > 0 && d % step == 0L }
         }
 
         val all = points.flatMap { listOf(it.rawKg, it.trendKg) } +
@@ -403,11 +408,11 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
                     )
                 } else {
                     val point = future[index - points.size]
-                    val weeks = ChronoUnit.DAYS.between(today, point.date) / 7
+                    val ahead = ChronoUnit.DAYS.between(today, point.date)
                     ChartReadout(
                         title = "${chartDate(point.date)} — predicted",
                         values = listOf(
-                            "In" to "$weeks weeks",
+                            "In" to if (ahead < 14) "$ahead days" else "${ahead / 7} weeks",
                             "Range" to "%.1f–%.1f kg".format(point.lowKg, point.highKg),
                             "Midpoint" to "%.1f kg".format(point.midKg),
                         ),

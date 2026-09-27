@@ -243,23 +243,21 @@ enum class ChartRange(val days: Int, val label: String) {
 }
 
 /**
- * Picks the span a chart covers. Ranges longer than the data are left out rather than
- * offered and then silently clamped.
+ * Picks the span a chart covers.
+ *
+ * Every range is always offered. Hiding the ones longer than the available data seemed
+ * tidy and was not: the 90-day chip vanished whenever it was not selected and reappeared
+ * when it was, so the control looked like it was changing its own options. A range with
+ * no extra data in it simply draws what there is, which is a far smaller sin than a
+ * button that disappears.
  */
 @Composable
-fun RangeSelector(selected: ChartRange, available: Int, onSelect: (ChartRange) -> Unit) {
-    // Always keep the shortest span and whatever is currently chosen, so the chips can
-    // never disagree with what the chart is actually showing.
-    val offered = ChartRange.entries.filter {
-        it == ChartRange.entries.first() || it == selected || it.days <= available
-    }
-    if (offered.size < 2) return
-
+fun RangeSelector(selected: ChartRange, onSelect: (ChartRange) -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        offered.forEach { range ->
+        ChartRange.entries.forEach { range ->
             FilterChip(
                 selected = range == selected,
                 onClick = { onSelect(range) },
