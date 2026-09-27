@@ -4,6 +4,8 @@ import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.settings.BodyProfile
 import nl.flwe.kcalwidget.data.settings.Sex
 import java.time.Duration
+import nl.flwe.kcalwidget.data.history.CarryState
+import nl.flwe.kcalwidget.data.history.ResolvedCarry
 import java.time.Instant
 import kotlin.math.roundToInt
 
@@ -50,11 +52,17 @@ data class DayEnergy(
     /** Surplus or deficit carried in from the past week, 0 unless banking is on. */
     val bankedAdjustmentKcal: Double,
     /**
-     * True when weekly banking contributed to the budget. Distinct from a zero carry:
-     * "banking is on and the week came out even" and "banking is off" are different
-     * answers to "why is my budget that number".
+     * Whether the carry is real, remembered or missing. A zero carry and an unreadable
+     * one are different answers to "why is my budget that number", and conflating them
+     * is what let a failed read cancel a 700 kcal penalty without saying anything.
      */
-    val bankingApplied: Boolean,
+    val carryState: CarryState,
+    /**
+     * Room the week has that today's budget is deliberately not spending, because
+     * banking only ever tightens the headline. Negative means the week is ahead of the
+     * goal rather than behind it.
+     */
+    val weeklySpareKcal: Double,
     /** The goal's daily allowance, negative to lose and positive to gain. */
     val goalDeltaKcal: Double,
     /** True when learned calibration factors were applied to burn and intake. */
@@ -74,6 +82,14 @@ data class DayEnergy(
     val hasNutritionData: Boolean,
     val updatedAt: Instant,
 ) {
+    /** True when banking contributed, from a fresh or a remembered carry. */
+    val bankingApplied: Boolean get() = carryState.let {
+        it == CarryState.FRESH || it == CarryState.STALE
+    }
+
+    /** True when the week has room today's budget is not spending. */
+    val hasWeeklySpare: Boolean get() = weeklySpareKcal >= 1.0
+
     /** Fraction of the budget already eaten, clamped for progress bars. */
     val intakeFraction: Float
         get() = if (budgetKcal <= 0.0) 1f else (intakeKcal / budgetKcal).toFloat().coerceIn(0f, 1f)
@@ -129,7 +145,7 @@ object Energetics {
         settings: AppSettings,
         elapsedToday: Duration,
         baseline: TdeeBaseline? = null,
-        bankedAdjustmentKcal: Double = 0.0,
+        carry: ResolvedCarry = ResolvedCarry.OFF,
         now: Instant = Instant.now(),
     ): DayEnergy {
         val weightKg = snapshot.weightKg ?: settings.body.fallbackWeightKg
@@ -205,12 +221,33 @@ object Energetics {
         val restOfDayFloor = correctedBurnedSoFar + correctedBmrPerDay * (1.0 - dayFraction)
         val projectedBurn = maxOf(estimate, restOfDayFloor)
 
-        // With banking on, the week is the unit: yesterday's restraint pays for today.
-        val banked = if (settings.goal.useWeeklyBanking) bankedAdjustmentKcal else 0.0
+        // Banking may tighten today's budget but never loosen it.
+        //
+        // The weekly view and the daily view disagree whenever the week is running ahead,
+        // and spending that lead automatically is how a week of restraint turns into a
+        // budget that climbs on the days it should be holding firm. So the headline takes
+        // whichever of the two sits further towards the goal, and the difference is
+        // reported separately as room available over the week rather than folded in
+        // silently. Symmetric: gaining takes the higher, everything else the lower.
+        val delta = settings.goal.dailyEnergyDelta
+        // The switch is checked here as well as in Banking.resolve. Two gates on one
+        // setting is cheap; a budget that quietly banks because a caller handed over a
+        // stale carry after the user turned banking off is not.
+        val banking = settings.goal.useWeeklyBanking && carry.applies
+        val plainTarget = projectedBurn + delta
+        val bankedTarget = plainTarget + carry.kcal
+        val goalBudget = if (banking) {
+            if (delta > 0) maxOf(plainTarget, bankedTarget) else minOf(plainTarget, bankedTarget)
+        } else {
+            plainTarget
+        }
+
+        // What banking would have added, held back rather than spent. Positive means the
+        // week has room to spare; negative means the week is already ahead of the goal.
+        val weeklySpare = if (banking) bankedTarget - goalBudget else 0.0
 
         // A goal aggressive enough to push the budget under the intake floor loses to the
         // floor, and the UI says so rather than quietly serving a smaller number.
-        val goalBudget = projectedBurn + settings.goal.dailyEnergyDelta + banked
         val floor = settings.goal.minIntakeFloorKcal.toDouble()
         val budget = maxOf(goalBudget, floor)
 
@@ -230,9 +267,10 @@ object Energetics {
             surplusVsTypicalKcal = surplus,
             baselineDays = effectiveBaseline.sampleDays,
             budgetKcal = budget,
-            bankedAdjustmentKcal = banked,
-            bankingApplied = settings.goal.useWeeklyBanking,
-            goalDeltaKcal = settings.goal.dailyEnergyDelta,
+            bankedAdjustmentKcal = if (banking) carry.kcal else 0.0,
+            carryState = if (settings.goal.useWeeklyBanking) carry.state else CarryState.OFF,
+            weeklySpareKcal = weeklySpare,
+            goalDeltaKcal = delta,
             calibrationApplied = calibrating,
             intakeFloorApplied = goalBudget < floor,
             remainingKcal = remaining,

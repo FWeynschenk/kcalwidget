@@ -107,6 +107,8 @@ class SettingsRepository(private val context: Context) {
         this[Keys.WEEKLY_CHANGE] = s.goal.weeklyChangeKg
         s.goal.targetWeightKg.let { if (it == null) remove(Keys.TARGET_WEIGHT) else this[Keys.TARGET_WEIGHT] = it }
         this[Keys.WEEKLY_BANKING] = s.goal.useWeeklyBanking
+        s.banking.lastCarryKcal?.let { this[Keys.LAST_CARRY_KCAL] = it }
+        s.banking.lastCarryDay?.let { this[Keys.LAST_CARRY_DAY] = it }
         this[Keys.MIN_INTAKE] = s.goal.minIntakeFloorKcal
         s.goal.goalAchievedAt.let { if (it == null) remove(Keys.GOAL_ACHIEVED_AT) else this[Keys.GOAL_ACHIEVED_AT] = it }
 
@@ -148,6 +150,8 @@ class SettingsRepository(private val context: Context) {
         val WEEKLY_CHANGE = doublePreferencesKey("weekly_change_kg")
         val TARGET_WEIGHT = doublePreferencesKey("target_weight_kg")
         val WEEKLY_BANKING = booleanPreferencesKey("weekly_banking")
+        val LAST_CARRY_KCAL = doublePreferencesKey("last_carry_kcal")
+        val LAST_CARRY_DAY = longPreferencesKey("last_carry_day")
         val MIN_INTAKE = intPreferencesKey("min_intake_kcal")
         val GOAL_ACHIEVED_AT = longPreferencesKey("goal_achieved_at")
 

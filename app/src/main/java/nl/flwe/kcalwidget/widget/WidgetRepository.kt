@@ -15,6 +15,10 @@ import nl.flwe.kcalwidget.data.Energetics
 import nl.flwe.kcalwidget.data.HealthAvailability
 import nl.flwe.kcalwidget.data.HealthRepository
 import nl.flwe.kcalwidget.data.history.History
+import nl.flwe.kcalwidget.data.DayWindow
+import nl.flwe.kcalwidget.data.history.Banking
+import nl.flwe.kcalwidget.data.history.CarryState
+import nl.flwe.kcalwidget.data.settings.BankingState
 import nl.flwe.kcalwidget.data.history.HistoryRepository
 import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.settings.SettingsRepository
@@ -84,9 +88,24 @@ object WidgetRepository {
                     }.getOrNull()
                 }
 
-                energy = runCatching {
-                    health.todayEnergy(settings, baseline, history?.bankedAdjustmentKcal ?: 0.0)
-                }.getOrNull()
+                // Same rule as the app: a short read must not cancel the carry.
+                val today = DayWindow.currentStart(settings.calculation.dayStartHour).toLocalDate()
+                val carry = Banking.resolve(
+                    fresh = history?.carry,
+                    remembered = settings.banking,
+                    today = today,
+                    enabled = settings.goal.useWeeklyBanking,
+                )
+                if (carry.state == CarryState.FRESH) {
+                    val remembered = BankingState(carry.kcal, today.toEpochDay())
+                    if (remembered != settings.banking) {
+                        runCatching {
+                            SettingsRepository(context).update { it.copy(banking = remembered) }
+                        }
+                    }
+                }
+
+                energy = runCatching { health.todayEnergy(settings, baseline, carry) }.getOrNull()
                 status = if (energy == null) WidgetStatus.ERROR else WidgetStatus.OK
             }
         }
@@ -110,6 +129,7 @@ object WidgetRepository {
                     prefs[WidgetKeys.HAS_NUTRITION] = energy.hasNutritionData
                     prefs[WidgetKeys.CALIBRATION_APPLIED] = energy.calibrationApplied
                     prefs[WidgetKeys.GOAL_DELTA] = energy.goalDeltaKcal
+                    prefs[WidgetKeys.WEEKLY_SPARE] = energy.weeklySpareKcal
                     prefs[WidgetKeys.WEIGHT_KG] = energy.weightKg
                     prefs[WidgetKeys.WEIGH_IN_DUE] = weighInDue(energy.daysSinceWeighIn, settings)
                     energy.daysSinceWeighIn?.let { prefs[WidgetKeys.DAYS_SINCE_WEIGH_IN] = it }

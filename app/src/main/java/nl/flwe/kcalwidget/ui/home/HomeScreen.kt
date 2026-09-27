@@ -36,6 +36,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import nl.flwe.kcalwidget.data.BurnSource
 import nl.flwe.kcalwidget.data.DayEnergy
+import nl.flwe.kcalwidget.data.history.CarryState
 import nl.flwe.kcalwidget.data.HealthAvailability
 import nl.flwe.kcalwidget.data.HealthRepository
 import nl.flwe.kcalwidget.ui.MainViewModel
@@ -183,6 +184,9 @@ private fun BudgetBreakdown(energy: DayEnergy) {
         StatRow("Carried from the past week", "${signed(carry)} kcal")
     }
     StatRow("Budget", "${energy.budgetKcal.roundToInt()} kcal")
+    if (energy.hasWeeklySpare) {
+        StatRow("Spare this week", "${signed(energy.weeklySpareKcal.roundToInt())} kcal")
+    }
 }
 
 private fun signed(kcal: Int) = if (kcal > 0) "+$kcal" else kcal.toString()
@@ -277,25 +281,42 @@ private fun TodayCard(energy: DayEnergy?) {
             Spacer(Modifier.height(8.dp))
             Explainer(
                 buildString {
-                    append("Weekly banking is on, so the budget is the projection plus your ")
-                    append("goal, plus whatever the past six days left over. ")
+                    append("Weekly banking is on. ")
                     append(
                         when {
-                            energy.bankedAdjustmentKcal > 1 ->
-                                "Those days came in under, so today has " +
-                                    "${energy.bankedAdjustmentKcal.roundToInt()} kcal more " +
-                                    "than the goal alone would give."
+                            energy.hasWeeklySpare ->
+                                "The past six days came in under your goal, so the week has " +
+                                    "${energy.weeklySpareKcal.roundToInt()} kcal spare. " +
+                                    "Today's budget does not include it: it stays on the " +
+                                    "daily goal, and the spare is yours to spend " +
+                                    "deliberately rather than by drifting into it."
                             energy.bankedAdjustmentKcal < -1 ->
-                                "Those days came in over, so today is paying " +
+                                "Those days came in over your goal, so today is paying " +
                                     "${(-energy.bankedAdjustmentKcal).roundToInt()} kcal of " +
-                                    "it back."
+                                    "it back and the budget is lower than the daily goal alone."
                             else ->
                                 "The week has come out even so far, so the budget is the " +
-                                    "goal on its own."
+                                    "daily goal on its own."
                         }
                     )
                     append(" History shows the day-by-day figures behind that carry.")
                 }
+            )
+        }
+        if (energy.carryState == CarryState.STALE) {
+            Spacer(Modifier.height(8.dp))
+            Explainer(
+                "The past week could not be read just now, so the budget is using the " +
+                    "last carry it managed to read. It will correct itself on the next " +
+                    "successful read."
+            )
+        }
+        if (energy.carryState == CarryState.UNAVAILABLE) {
+            Spacer(Modifier.height(8.dp))
+            Explainer(
+                "Weekly banking is on, but the past week could not be read and nothing " +
+                    "recent was remembered, so today's budget is running on the daily goal " +
+                    "alone. It is not a claim that the week came out even."
             )
         }
         if (energy.intakeFloorApplied) {

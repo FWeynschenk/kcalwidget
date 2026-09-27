@@ -19,6 +19,9 @@ import nl.flwe.kcalwidget.data.DayEnergy
 import nl.flwe.kcalwidget.data.DayWindow
 import nl.flwe.kcalwidget.data.Energetics
 import nl.flwe.kcalwidget.data.HealthAvailability
+import nl.flwe.kcalwidget.data.history.Banking
+import nl.flwe.kcalwidget.data.history.CarryState
+import nl.flwe.kcalwidget.data.settings.BankingState
 import nl.flwe.kcalwidget.data.HealthRepository
 import nl.flwe.kcalwidget.data.HealthSnapshot
 import nl.flwe.kcalwidget.data.TdeeBaseline
@@ -124,6 +127,21 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             baseline = read.baseline
             history = read.history
 
+            // A read that comes back short must not read as a week that came out even.
+            val today = DayWindow.currentStart(settings.calculation.dayStartHour).toLocalDate()
+            val carry = Banking.resolve(
+                fresh = read.history?.carry,
+                remembered = settings.banking,
+                today = today,
+                enabled = settings.goal.useWeeklyBanking,
+            )
+            if (carry.state == CarryState.FRESH) {
+                val remembered = BankingState(carry.kcal, today.toEpochDay())
+                if (remembered != settings.banking) {
+                    settingsRepo.update { it.copy(banking = remembered) }
+                }
+            }
+
             _state.value = UiState(
                 loading = false,
                 readFailed = false,
@@ -138,7 +156,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         settings,
                         elapsedToday(settings),
                         read.baseline,
-                        read.history?.bankedAdjustmentKcal ?: 0.0,
+                        carry,
                     )
                 },
                 sourceCatalog = _state.value.sourceCatalog,
@@ -171,7 +189,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         next,
                         elapsedToday(next),
                         baseline,
-                        history?.bankedAdjustmentKcal ?: 0.0,
+                        Banking.resolve(
+                            fresh = history?.carry,
+                            remembered = next.banking,
+                            today = DayWindow.currentStart(next.calculation.dayStartHour)
+                                .toLocalDate(),
+                            enabled = next.goal.useWeeklyBanking,
+                        ),
                     )
                 },
             )

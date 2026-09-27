@@ -17,6 +17,7 @@ import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
+import nl.flwe.kcalwidget.data.history.ResolvedCarry
 import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.settings.HealthMetric
 import java.time.Duration
@@ -129,12 +130,12 @@ class HealthRepository(private val context: Context) {
     suspend fun todayEnergy(
         settings: AppSettings,
         baseline: TdeeBaseline? = null,
-        bankedAdjustmentKcal: Double = 0.0,
+        carry: ResolvedCarry = ResolvedCarry.OFF,
         now: Instant = Instant.now(),
     ): DayEnergy? {
         val snapshot = readToday(settings) ?: return null
         val elapsed = DayWindow.elapsed(settings.calculation.dayStartHour)
-        return Energetics.compute(snapshot, settings, elapsed, baseline, bankedAdjustmentKcal, now)
+        return Energetics.compute(snapshot, settings, elapsed, baseline, carry, now)
     }
 
     /**

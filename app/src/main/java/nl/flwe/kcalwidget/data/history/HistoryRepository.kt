@@ -15,11 +15,13 @@ import androidx.health.connect.client.time.TimeRangeFilter
 import nl.flwe.kcalwidget.data.DayWindow
 import nl.flwe.kcalwidget.data.HealthRepository
 import nl.flwe.kcalwidget.data.settings.AppSettings
+import nl.flwe.kcalwidget.data.settings.BankingState
 import nl.flwe.kcalwidget.data.settings.HealthMetric
 import nl.flwe.kcalwidget.data.weight.WeightTrend
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.Period
+import java.time.temporal.ChronoUnit
 import java.time.ZoneId
 
 /** One complete day, as it actually happened. */
@@ -84,8 +86,71 @@ data class BankedCarry(
 ) {
     val capped: Boolean get() = kotlin.math.abs(rawTotalKcal - totalKcal) > 0.5
 
+    /** False when no complete day could be read, which is not the same as a carry of zero. */
+    val isReal: Boolean get() = days.isNotEmpty()
+
     companion object {
         val NONE = BankedCarry(emptyList(), 0.0, 0.0)
+    }
+}
+
+/** Where today's carry figure came from, which decides what the UI is allowed to claim. */
+enum class CarryState {
+    /** Banking is off. */
+    OFF,
+
+    /** Read from complete days just now. */
+    FRESH,
+
+    /** The read came back short, so the last good figure is standing in. */
+    STALE,
+
+    /** Nothing readable and nothing remembered. The budget runs without a carry. */
+    UNAVAILABLE,
+}
+
+data class ResolvedCarry(val kcal: Double, val state: CarryState) {
+    val applies: Boolean get() = state == CarryState.FRESH || state == CarryState.STALE
+
+    companion object {
+        val OFF = ResolvedCarry(0.0, CarryState.OFF)
+    }
+}
+
+/**
+ * Decides which carry today's budget should use.
+ *
+ * This exists because the obvious version -- `carry ?: 0.0` -- is actively dangerous. A
+ * Health Connect read that comes back short is indistinguishable from a week that came
+ * out even, and treating the two the same silently cancels a penalty of up to 700 kcal:
+ * the budget jumps by that much, mid-afternoon, for no reason the user can see. It has
+ * happened, and it read as a small walk somehow being worth a thousand calories.
+ *
+ * A carry is computed from days that are already over, so it does not change during the
+ * day. Yesterday's figure standing in for a failed read is a far better estimate than
+ * zero, which is not an estimate at all.
+ */
+object Banking {
+
+    /** Beyond this the remembered carry is describing a window that has moved on. */
+    const val MAX_REMEMBERED_DAYS = 2L
+
+    fun resolve(
+        fresh: BankedCarry?,
+        remembered: BankingState,
+        today: LocalDate,
+        enabled: Boolean,
+    ): ResolvedCarry {
+        if (!enabled) return ResolvedCarry.OFF
+        if (fresh != null && fresh.isReal) return ResolvedCarry(fresh.totalKcal, CarryState.FRESH)
+
+        val kcal = remembered.lastCarryKcal
+        val day = remembered.lastCarryDay
+        if (kcal != null && day != null) {
+            val age = ChronoUnit.DAYS.between(LocalDate.ofEpochDay(day), today)
+            if (age in 0..MAX_REMEMBERED_DAYS) return ResolvedCarry(kcal, CarryState.STALE)
+        }
+        return ResolvedCarry(0.0, CarryState.UNAVAILABLE)
     }
 }
 
