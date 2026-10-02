@@ -188,7 +188,7 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
         }
 
         val actuals = series.mapNotNull { it.actualKg }
-        val all = series.map { it.expectedKg } + actuals
+        val all = series.map { it.expectedKg } + actuals + series.mapNotNull { it.rawKg }
         val min = all.min()
         val max = all.max()
         val span = (max - min).coerceAtLeast(0.5)
@@ -210,6 +210,9 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
                     title = chartDate(point.date),
                     values = buildList {
                         add("Predicted" to "%.1f kg".format(point.expectedKg))
+                        if (point.rawKg != null) {
+                            add("On the scale" to "%.1f kg".format(point.rawKg))
+                        }
                         if (point.actualKg != null) {
                             add("Measured" to "%.1f kg".format(point.actualKg))
                             val gap = point.actualKg - point.expectedKg
@@ -249,6 +252,16 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
                     strokeWidth = 5f,
                 )
             }
+            // The readings themselves, so the smoothing is visible rather than asserted.
+            series.forEachIndexed { index, point ->
+                point.rawKg?.let {
+                    drawCircle(
+                        color = Color.Gray,
+                        radius = 3f,
+                        center = Offset(x(index), y(it)),
+                    )
+                }
+            }
             measured.forEach { (index, point) ->
                 drawCircle(
                     color = ACTUAL,
@@ -266,12 +279,15 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
             listOf(
                 PREDICTED to "Predicted by calories",
                 ACTUAL to "Measured weight",
+                Color.Gray to "Weigh-ins",
             )
         )
         Spacer(Modifier.height(8.dp))
         Explainer(
-            "Drag across the chart to read any day. Blue is what your food and burn " +
-                "numbers predict; green is your smoothed weight. They start together; how " +
+            "Drag across the chart to read any day. Grey dots are what the scale said. " +
+                "Blue is what your food and burn numbers predict; green is your weight " +
+                "smoothed evenly across the days either side, so it tracks the dots " +
+                "rather than trailing them. They start together; how " +
                 "far apart they end is the difference being measured. The span is the " +
                 "calibration window itself, so it is not adjustable: a shorter view would " +
                 "show a gap other than the one being measured."

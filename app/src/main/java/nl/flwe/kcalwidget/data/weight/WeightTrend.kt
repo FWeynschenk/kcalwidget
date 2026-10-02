@@ -2,12 +2,25 @@ package nl.flwe.kcalwidget.data.weight
 
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.pow
 
 data class WeightPoint(
     val date: LocalDate,
     val rawKg: Double,
+    /**
+     * Causal smoothing: only the past is used, so this is what the trend looked like on
+     * the day. Necessarily lags, which is the price of being computable before the next
+     * reading exists.
+     */
     val trendKg: Double,
+    /**
+     * Symmetric smoothing, using the readings either side. No lag, and therefore only
+     * meaningful looking back -- the newest point has nothing to its right and drifts
+     * towards the causal value. For charts of what happened, not for "what do I weigh".
+     */
+    val centredKg: Double = trendKg,
 )
 
 /**
@@ -72,13 +85,49 @@ data class WeightTrend(
             }
 
             return WeightTrend(
-                points = points,
+                points = withCentred(points, byDay),
                 currentTrendKg = points.last().trendKg,
                 weeklyChangeKg = weeklySlope(points),
                 lastWeighIn = points.last().date,
                 weighInDays = points.size,
             )
         }
+
+        /**
+         * Fills in the lag-free series.
+         *
+         * A causal EMA is the right tool for "what do I weigh today" and the wrong one for
+         * a chart of the past: it is behind the readings by construction, so plotting it
+         * against anything makes the scale look like it is trailing the calories when it
+         * is really just trailing itself. Looking back, the readings on both sides are
+         * available, so there is no reason to use only one.
+         *
+         * A Gaussian over the actual dates rather than over positions, because weigh-ins
+         * are irregular and a positional window would weight a cluster of three days the
+         * same as three weeks.
+         */
+        private fun withCentred(
+            points: List<WeightPoint>,
+            byDay: Map<LocalDate, Double>,
+        ): List<WeightPoint> = points.map { point ->
+            var weighted = 0.0
+            var total = 0.0
+            byDay.forEach { (date, raw) ->
+                val gap = ChronoUnit.DAYS.between(point.date, date).toDouble()
+                if (abs(gap) <= CENTRED_REACH_DAYS) {
+                    val w = exp(-(gap * gap) / (2 * CENTRED_SIGMA_DAYS * CENTRED_SIGMA_DAYS))
+                    weighted += w * raw
+                    total += w
+                }
+            }
+            if (total > 0) point.copy(centredKg = weighted / total) else point
+        }
+
+        /** Width of the symmetric smoother. Comparable in effect to the causal alpha. */
+        const val CENTRED_SIGMA_DAYS = 3.5
+
+        /** Beyond this a reading contributes nothing worth the arithmetic. */
+        const val CENTRED_REACH_DAYS = 10.0
 
         /** Least-squares slope of the smoothed series, converted to kg per week. */
         private fun weeklySlope(points: List<WeightPoint>): Double? {

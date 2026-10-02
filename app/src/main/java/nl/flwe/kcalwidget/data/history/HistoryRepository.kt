@@ -22,6 +22,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.Period
 import java.time.temporal.ChronoUnit
+import kotlin.math.pow
 import java.time.ZoneId
 
 /** One complete day, as it actually happened. */
@@ -66,9 +67,23 @@ data class CarryDay(
     val intakeKcal: Double,
     /** The goal's own allowance for that day. */
     val goalDeltaKcal: Double,
+    /** How much this day still counts, 1.0 the morning after and halving every few days. */
+    val weight: Double,
 ) {
-    /** Positive means that day left something over for today. */
-    val kcal: Double get() = (burnKcal + goalDeltaKcal) - intakeKcal
+    /** What the day actually came to. Positive means it left something over. */
+    val rawKcal: Double get() = (burnKcal + goalDeltaKcal) - intakeKcal
+
+    /** [rawKcal] after the per-day limit, before ageing. */
+    val clippedKcal: Double
+        get() = rawKcal.coerceIn(
+            -HistoryRepository.MAX_DAY_CONTRIBUTION_KCAL,
+            HistoryRepository.MAX_DAY_CONTRIBUTION_KCAL,
+        )
+
+    val wasClipped: Boolean get() = kotlin.math.abs(rawKcal - clippedKcal) > 1.0
+
+    /** What this day contributes to today's carry, after clipping and ageing. */
+    val kcal: Double get() = clippedKcal * weight
 }
 
 /**
@@ -411,14 +426,19 @@ class HistoryRepository(
             val intakeFactor = if (calibrating) settings.calibration.intakeFactor else 1.0
             val delta = settings.goal.dailyEnergyDelta
 
-            val days = rows.takeLast(BANKING_DAYS)
-                .filter { it.intakeKcal != null && it.burnKcal != null }
+            val today = rows.lastOrNull()?.date?.plusDays(1) ?: return BankedCarry.NONE
+            val oldest = today.minusDays(CARRY_WINDOW_DAYS.toLong())
+
+            val days = rows
+                .filter { it.date >= oldest && it.intakeKcal != null && it.burnKcal != null }
                 .map { row ->
+                    val age = ChronoUnit.DAYS.between(row.date, today)
                     CarryDay(
                         date = row.date,
                         burnKcal = row.burnKcal!! * burnFactor,
                         intakeKcal = row.intakeKcal!! * intakeFactor,
                         goalDeltaKcal = delta,
+                        weight = ageWeight(age),
                     )
                 }
             if (days.isEmpty()) return BankedCarry.NONE
@@ -427,14 +447,53 @@ class HistoryRepository(
             return BankedCarry(days, raw, raw.coerceIn(-MAX_BANKED_KCAL, MAX_BANKED_KCAL))
         }
 
+        /**
+         * How much a day [age] days ago still counts. 1.0 the morning after, halving every
+         * [CARRY_HALF_LIFE_DAYS].
+         *
+         * Deliberately not normalised to a fixed total. Over a full window the weights sum
+         * to about six, which is where the old six-day window's scale came from, and when
+         * days are missing the carry shrinks by itself -- which is right, because there is
+         * less evidence behind it. Normalising would scale three logged days up as though
+         * they were six.
+         */
+        internal fun ageWeight(age: Long): Double =
+            0.5.pow((age - 1).coerceAtLeast(0L) / CARRY_HALF_LIFE_DAYS)
+
         /** The carry as a single number, which is all the budget needs. */
         internal fun bankedAdjustment(rows: List<DayRow>, settings: AppSettings): Double =
             bankedCarry(rows, settings).totalKcal
 
         const val DEFAULT_DAYS = 90
-        const val BANKING_DAYS = 6
 
-        /** One heavy day should not be able to swallow the whole week's budget. */
+        /**
+         * Days read for the carry. Longer than the carry effectively reaches, because the
+         * tail has to be there for the weighting to decay into rather than fall off.
+         */
+        const val BANKING_DAYS = 21
+        const val CARRY_WINDOW_DAYS = 21
+
+        /**
+         * How fast a day stops counting.
+         *
+         * A rectangular window was the problem: a day counted fully for six days and then
+         * nothing at all, so the budget lurched by the whole of that day overnight. One
+         * big Saturday would hand you several hundred kcal of room all week and then take
+         * every last one back in a single step, which is the shape most likely to be eaten
+         * into and then regretted. Halving smoothly means no day's departure is an event.
+         */
+        const val CARRY_HALF_LIFE_DAYS = 4.0
+
+        /**
+         * The most any single day may contribute before ageing.
+         *
+         * Without it one exceptional day dominates the whole window, and the licence it
+         * grants outlives the memory of earning it. Symmetric, so a blow-out is forgiven
+         * on the same terms a fast is discounted.
+         */
+        const val MAX_DAY_CONTRIBUTION_KCAL = 600.0
+
+        /** One heavy week should not be able to swallow today's budget. */
         const val MAX_BANKED_KCAL = 700.0
 
         /** How many raw weigh-ins to keep for the diagnostics panel. */

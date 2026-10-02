@@ -20,8 +20,14 @@ enum class CalibrationGap {
 data class DivergencePoint(
     val date: LocalDate,
     val expectedKg: Double,
-    /** Null on days without a weigh-in; the smoothed trend only exists where it was measured. */
+    /**
+     * Smoothed symmetrically rather than causally. The causal trend is behind the scale
+     * by construction, so charting it against the calorie line made the scale look like
+     * it was lagging the calories when it was really lagging itself.
+     */
     val actualKg: Double?,
+    /** Exactly what the scale said, so the smoothing can be seen rather than trusted. */
+    val rawKg: Double? = null,
 )
 
 sealed interface CalibrationResult {
@@ -209,8 +215,9 @@ object Calibration {
         val cutoff = latest.minusDays(WINDOW_DAYS - 1L)
         val rows = history.rows.filter { it.date >= cutoff }.sortedBy { it.date }
         val points = history.trend.points.filter { it.date >= cutoff }
-        val anchor = points.firstOrNull()?.trendKg ?: return emptyList()
-        val actualByDate = points.associate { it.date to it.trendKg }
+        val anchor = points.firstOrNull()?.centredKg ?: return emptyList()
+        val actualByDate = points.associate { it.date to it.centredKg }
+        val rawByDate = points.associate { it.date to it.rawKg }
 
         // The day's balance is recorded after its point, not before: the weight you see on
         // a given morning reflects the days behind it, not the one still to come. That also
@@ -221,6 +228,7 @@ object Calibration {
                 date = row.date,
                 expectedKg = anchor + cumulative,
                 actualKg = actualByDate[row.date],
+                rawKg = rawByDate[row.date],
             )
             row.netKcal?.let { cumulative += it / Energetics.KCAL_PER_KG_FAT }
             point
