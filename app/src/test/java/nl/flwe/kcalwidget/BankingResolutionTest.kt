@@ -22,7 +22,7 @@ class BankingResolutionTest {
     private val today = LocalDate.of(2026, 9, 27)
 
     private fun realCarry(total: Double) = BankedCarry(
-        days = listOf(CarryDay(today.minusDays(1), 2500.0, 2500.0 - total, -0.0)),
+        days = listOf(CarryDay(today.minusDays(1), 2500.0, 2500.0 - total, -0.0, weight = 1.0)),
         rawTotalKcal = total,
         totalKcal = total,
     )
