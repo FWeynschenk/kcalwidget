@@ -498,7 +498,7 @@ class EnergeticsTest {
     }
 
     @Test
-    fun `applied calibration scales burn and intake but not the reported total`() {
+    fun `applied calibration scales every figure, keeping the raw ones alongside`() {
         val calibrated = settings.copy(
             features = FeatureFlags(autoCalibration = true),
             calibration = CalibrationState(expenditureFactor = 0.9, intakeFactor = 1.1),
@@ -519,7 +519,10 @@ class EnergeticsTest {
         assertEquals(1100.0, result.intakeKcal, 0.001)
         // What the tracker actually said is preserved, so the disagreement stays visible.
         assertEquals(1000.0, result.rawIntakeKcal, 0.001)
-        assertEquals(1400.0, result.burnedSoFarKcal, 0.001)
+        // Burn so far is corrected like everything else, with the tracker's own figure
+        // kept alongside it rather than in place of it.
+        assertEquals(1400.0 * 0.9, result.burnedSoFarKcal, 0.001)
+        assertEquals(1400.0, result.rawBurnedSoFarKcal, 0.001)
         assertTrue(result.calibrationApplied)
     }
 
@@ -540,8 +543,9 @@ class EnergeticsTest {
         )
         assertEquals(flatBaseline.meanFullDayKcal * 0.9, result.typicalDayKcal, 0.001)
         assertEquals(bmr * 0.9, result.bmrPerDayKcal, 0.001)
-        // What the tracker reported is still reported.
-        assertEquals(1400.0, result.burnedSoFarKcal, 0.001)
+        assertEquals(1400.0 * 0.9, result.burnedSoFarKcal, 0.001)
+        // What the tracker reported is still reported, beside it.
+        assertEquals(1400.0, result.rawBurnedSoFarKcal, 0.001)
     }
 
     @Test

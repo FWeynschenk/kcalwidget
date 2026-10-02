@@ -103,13 +103,13 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             return@SettingsScaffold
         }
 
-        item { SummaryCard(history) }
+        item { SummaryCard(history, state.settings) }
         item { NetChartCard(history, state.settings) }
         if (state.settings.goal.useWeeklyBanking) {
             item { CarryCard(history.carry, state.settings) }
         }
         item { WeightChartCard(history, state.settings) }
-        item { ExportCard(history) }
+        item { ExportCard(history, state.settings) }
         item {
             SectionCard("Days") {
                 Explainer(
@@ -125,9 +125,12 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SummaryCard(history: History) {
-    val complete = history.rows.filter { it.netKcal != null }
-    val meanNet = complete.mapNotNull { it.netKcal }.average().takeIf { complete.isNotEmpty() }
+private fun SummaryCard(history: History, settings: AppSettings) {
+    // Calibrated, like the chart above it and the budget it is compared against. An
+    // average that quietly used different numbers from everything else would be the
+    // same trap in summary form.
+    val nets = history.rows.mapNotNull { HistoryRepository.calibratedNet(it, settings) }
+    val meanNet = nets.average().takeIf { nets.isNotEmpty() }
     SectionCard("Summary") {
         StatRow("Days recorded", history.rows.size.toString())
         StatRow("Days with food logged", history.daysWithIntake.toString())
@@ -529,7 +532,7 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
 }
 
 @Composable
-private fun ExportCard(history: History) {
+private fun ExportCard(history: History, settings: AppSettings) {
     val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("text/csv")
@@ -537,7 +540,7 @@ private fun ExportCard(history: History) {
         if (uri != null) {
             runCatching {
                 context.contentResolver.openOutputStream(uri)?.use { stream ->
-                    stream.write(toCsv(history).toByteArray())
+                    stream.write(toCsv(history, settings).toByteArray())
                 }
             }
         }
@@ -576,15 +579,27 @@ private fun DayRowCard(row: DayRow) {
  * comma-separated, so every weight column silently split in two and shifted the rest of
  * the row. A spreadsheet opens it without complaint, which is what makes it dangerous.
  */
-internal fun toCsv(history: History): String {
+internal fun toCsv(history: History, settings: AppSettings): String {
     val trendByDate = history.trend.points.associate { it.date to it.centredKg }
+    val calibrating = settings.features.autoCalibration
+    val burnFactor = if (calibrating) settings.calibration.expenditureFactor else 1.0
+    val intakeFactor = if (calibrating) settings.calibration.intakeFactor else 1.0
     return buildString {
-        appendLine("date,intake_kcal,burn_kcal,net_kcal,weight_kg,trend_kg")
+        appendLine(
+            "date,intake_kcal,burn_kcal,net_kcal," +
+                "intake_calibrated,burn_calibrated,net_calibrated,weight_kg,trend_kg"
+        )
         history.rows.forEach { row ->
             append(row.date)
             append(',').append(row.intakeKcal?.roundToInt() ?: "")
             append(',').append(row.burnKcal?.roundToInt() ?: "")
             append(',').append(row.netKcal?.roundToInt() ?: "")
+            // Both scales, because a spreadsheet cannot ask which one these were.
+            append(',').append(row.intakeKcal?.let { (it * intakeFactor).roundToInt() } ?: "")
+            append(',').append(row.burnKcal?.let { (it * burnFactor).roundToInt() } ?: "")
+            append(',').append(
+                HistoryRepository.calibratedNet(row, settings)?.roundToInt() ?: ""
+            )
             append(',').append(row.weightKg?.let { String.format(Locale.ROOT, "%.2f", it) } ?: "")
             append(',').append(
                 trendByDate[row.date]?.let { String.format(Locale.ROOT, "%.2f", it) } ?: ""

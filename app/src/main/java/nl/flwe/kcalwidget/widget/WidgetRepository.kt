@@ -116,7 +116,6 @@ object WidgetRepository {
                 prefs[WidgetKeys.UPDATED_AT] = System.currentTimeMillis()
                 if (energy != null) {
                     prefs[WidgetKeys.INTAKE] = energy.intakeKcal
-                    prefs[WidgetKeys.RAW_INTAKE] = energy.rawIntakeKcal
                     prefs[WidgetKeys.BURNED_SO_FAR] = energy.burnedSoFarKcal
                     prefs[WidgetKeys.PROJECTED_BURN] = energy.projectedBurnKcal
                     prefs[WidgetKeys.TYPICAL_DAY] = energy.typicalDayKcal
@@ -138,7 +137,10 @@ object WidgetRepository {
                     h.trend.currentTrendKg?.let { prefs[WidgetKeys.TREND_WEIGHT_KG] = it }
                     h.trend.weeklyChangeKg?.let { prefs[WidgetKeys.WEEKLY_TREND_KG] = it }
                     prefs[WidgetKeys.NET_SERIES] = encodeSeries(
-                        h.rows.takeLast(TREND_DAYS).mapNotNull { it.netKcal }
+                        // Calibrated: these bars are coloured against the goal line, so
+                        // they have to be judged by the numbers the goal is enforced with.
+                        h.rows.takeLast(TREND_DAYS)
+                            .mapNotNull { HistoryRepository.calibratedNet(it, settings) }
                     )
                     prefs[WidgetKeys.WEIGHT_SERIES] = encodeSeries(
                         h.trend.points.takeLast(TREND_DAYS * 2).map { it.centredKg },

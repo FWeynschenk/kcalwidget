@@ -246,10 +246,13 @@ private fun TodayCard(energy: DayEnergy?) {
         } else {
             StatRow("Eaten", "${energy.intakeKcal.roundToInt()} kcal")
         }
-        StatRow(
-            label = if (energy.calibrationApplied) "Burned so far (as tracked)" else "Burned so far",
-            value = "${energy.burnedSoFarKcal.roundToInt()} kcal",
-        )
+        val burnAdjustment = abs(energy.burnedSoFarKcal - energy.rawBurnedSoFarKcal)
+        if (energy.calibrationApplied && burnAdjustment >= MIN_VISIBLE_ADJUSTMENT_KCAL) {
+            StatRow("Burned so far (calibrated)", "${energy.burnedSoFarKcal.roundToInt()} kcal")
+            StatRow("Burned so far (as tracked)", "${energy.rawBurnedSoFarKcal.roundToInt()} kcal")
+        } else {
+            StatRow("Burned so far", "${energy.burnedSoFarKcal.roundToInt()} kcal")
+        }
         StatRow("Projected by midnight", "${energy.projectedBurnKcal.roundToInt()} kcal")
         BudgetBreakdown(energy)
         StatRow("Resting rate", "${energy.bmrPerDayKcal.roundToInt()} kcal/day")
