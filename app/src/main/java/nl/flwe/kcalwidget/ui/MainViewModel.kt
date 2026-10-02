@@ -121,7 +121,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // chart into four days and re-fitted the forecast off a handful of
                     // weigh-ins, silently, on every resume.
                     bankingHistory = if (hasPermissions && settings.goal.useWeeklyBanking) {
-                        historyRepo.load(settings, HistoryRepository.BANKING_DAYS + 1)
+                        historyRepo.load(settings, HistoryRepository.BANKING_DAYS)
                     } else {
                         null
                     },

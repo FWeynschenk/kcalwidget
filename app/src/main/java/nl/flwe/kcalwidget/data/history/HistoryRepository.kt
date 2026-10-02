@@ -467,11 +467,16 @@ class HistoryRepository(
         const val DEFAULT_DAYS = 90
 
         /**
-         * Days read for the carry. Longer than the carry effectively reaches, because the
-         * tail has to be there for the weighting to decay into rather than fall off.
+         * Days read for the carry, and the span the carry is computed over.
+         *
+         * Exactly [CHUNK_DAYS], so the resume read is one Health Connect query rather than
+         * two. The burn aggregate is the slow one on this provider and has timed out
+         * before, so keeping the common path to a single chunk is worth more than the
+         * last few percent of a longer tail: at a four-day half-life the oldest day in a
+         * fortnight already counts for about a tenth, so its departure is not an event.
          */
-        const val BANKING_DAYS = 21
-        const val CARRY_WINDOW_DAYS = 21
+        const val BANKING_DAYS = 14
+        const val CARRY_WINDOW_DAYS = 14
 
         /**
          * How fast a day stops counting.
