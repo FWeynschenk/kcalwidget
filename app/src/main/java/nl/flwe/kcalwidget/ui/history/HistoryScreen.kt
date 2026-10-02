@@ -34,6 +34,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import nl.flwe.kcalwidget.data.history.BankedCarry
 import nl.flwe.kcalwidget.data.history.DayRow
 import nl.flwe.kcalwidget.data.history.History
+import nl.flwe.kcalwidget.data.history.HistoryRepository
 import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.weight.WeightForecast
 import nl.flwe.kcalwidget.ui.MainViewModel
@@ -105,7 +106,7 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         item { SummaryCard(history) }
         item { NetChartCard(history, state.settings) }
         if (state.settings.goal.useWeeklyBanking) {
-            item { CarryCard(history.carry) }
+            item { CarryCard(history.carry, state.settings) }
         }
         item { WeightChartCard(history, state.settings) }
         item { ExportCard(history) }
@@ -149,7 +150,10 @@ private fun SummaryCard(history: History) {
 private fun NetChartCard(history: History, settings: AppSettings) {
     var range by remember { mutableStateOf(ChartRange.MONTH) }
     val shown = history.rows.takeLast(range.days)
-    val nets = shown.map { it.netKcal }
+    // Corrected, so a green bar and a positive line in the carry card mean the same
+    // thing. The day list below stays raw, because that is a record of what the apps
+    // said rather than a verdict on it.
+    val nets = shown.map { HistoryRepository.calibratedNet(it, settings) }
     val target = settings.goal.dailyEnergyDelta
     // Gaining means clearing the line; every other goal means staying under it.
     val gaining = target > 0
@@ -189,14 +193,22 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             },
             readout = { index ->
                 val day = shown[index]
-                val net = day.netKcal
+                val net = nets[index]
+                val rawNet = day.netKcal
                 ChartReadout(
                     title = chartDate(day.date),
                     values = buildList {
                         add("Eaten" to (day.intakeKcal?.let { "${it.roundToInt()} kcal" } ?: "not logged"))
                         add("Burned" to (day.burnKcal?.let { "${it.roundToInt()} kcal" } ?: "not recorded"))
                         if (net != null) {
-                            add("Net" to "${signed(net)} kcal")
+                            // Both, when they differ: the figure in the day list and the
+                            // one the goal is actually judged against.
+                            if (rawNet != null && abs(net - rawNet) >= 1.0) {
+                                add("Net as logged" to "${signed(rawNet)} kcal")
+                                add("Net as counted" to "${signed(net)} kcal")
+                            } else {
+                                add("Net" to "${signed(net)} kcal")
+                            }
                             if (target != 0.0) {
                                 val off = net - target
                                 val met = if (gaining) net >= target else net <= target
@@ -263,8 +275,12 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             )
             Spacer(Modifier.height(4.dp))
             Explainer(
-                "Drag across the chart to read any day. The dashed line is what your goal " +
-                    "asks for each day: ${target.roundToInt()} kcal. " +
+                "Drag across the chart to read any day. Bars use your calibrated figures, " +
+                    "the same ones the budget and the weekly carry use, so a green bar " +
+                    "always means that day left something over. The raw numbers your apps " +
+                    "recorded are in the day list further down and can differ. " +
+                    "The dashed line is what your goal asks for each day: " +
+                    "${target.roundToInt()} kcal. " +
                     if (gaining) {
                         "Bars reaching above it are days you ate enough to gain at your " +
                             "chosen rate; bars short of it are days you did not."
@@ -293,7 +309,7 @@ private fun NetChartCard(history: History, settings: AppSettings) {
  * working behind it.
  */
 @Composable
-private fun CarryCard(carry: BankedCarry) {
+private fun CarryCard(carry: BankedCarry, settings: AppSettings) {
     SectionCard("Carried into today") {
         if (carry.days.isEmpty()) {
             Text(
@@ -303,10 +319,14 @@ private fun CarryCard(carry: BankedCarry) {
             return@SectionCard
         }
 
+        StatRow("", "as logged → counted")
         carry.days.forEach { day ->
+            // Three numbers per day, because one cannot be checked against anything. The
+            // middle figure is the day after calibration; the last is after ageing and
+            // the per-day limit, and is what actually reaches the budget.
             StatRow(
                 label = DAY_LABEL.format(day.date),
-                value = "${signed(day.kcal)} kcal",
+                value = "${signed(day.asLoggedKcal)} → ${signed(day.kcal)} kcal",
             )
         }
         Spacer(Modifier.height(4.dp))
@@ -317,7 +337,17 @@ private fun CarryCard(carry: BankedCarry) {
         Explainer(
             buildString {
                 append("Each day is its burn plus your goal, minus what you ate, so a ")
-                append("positive day left something over. A negative total tightens today's ")
+                append("positive day left something over. The first figure uses the numbers ")
+                append("your apps reported; the second is what the day actually contributes, ")
+                append("after calibration")
+                if (settings.features.autoCalibration) {
+                    append(" (burn counted at ${"%.2f".format(settings.calibration.expenditureFactor)}")
+                    append(" and intake at ${"%.2f".format(settings.calibration.intakeFactor)}")
+                    append(" of what was recorded)")
+                }
+                append(", after older days are faded out, and after the per-day limit of ")
+                append("${HistoryRepository.MAX_DAY_CONTRIBUTION_KCAL.roundToInt()} kcal. ")
+                append("A negative total tightens today's ")
                 append("budget; a positive one is reported as spare rather than spent, so a ")
                 append("good week does not quietly raise the bar on the next day. They add ")
                 append("up to ${signed(carry.rawTotalKcal)} kcal")
