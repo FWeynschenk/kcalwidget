@@ -3,6 +3,7 @@ package nl.flwe.kcalwidget
 import nl.flwe.kcalwidget.data.history.BankedCarry
 import nl.flwe.kcalwidget.data.history.DayRow
 import nl.flwe.kcalwidget.data.history.History
+import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.history.HistoryDiagnostics
 import nl.flwe.kcalwidget.data.weight.WeightPoint
 import nl.flwe.kcalwidget.data.weight.WeightTrend
@@ -65,7 +66,7 @@ class LocaleSerialisationTest {
             carry = BankedCarry.NONE,
             diagnostics = HistoryDiagnostics(0, 0, true, 0, 0, 0, emptyList(), emptyList(), emptyList()),
         )
-        val lines = toCsv(history).trim().lines()
+        val lines = toCsv(history, AppSettings()).trim().lines()
         val header = lines.first().count { it == ',' }
         lines.drop(1).forEach { row ->
             assertEquals("row shifted: $row", header, row.count { it == ',' })

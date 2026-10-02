@@ -31,11 +31,13 @@ data class DayEnergy(
     /** Intake exactly as Health Connect reported it, before calibration. */
     val rawIntakeKcal: Double,
     /**
-     * Burn accumulated since the start of the logical day, exactly as reported. This one
-     * is deliberately never corrected: it is what the tracker said, and rewriting it would
-     * hide the very disagreement calibration exists to surface.
+     * Burn accumulated since the start of the logical day, corrected like everything else
+     * the budget is built from. Shown next to [rawBurnedSoFarKcal] when the two differ, so
+     * the disagreement calibration exists to surface is still visible.
      */
     val burnedSoFarKcal: Double,
+    /** The same figure exactly as the tracker reported it, before any correction. */
+    val rawBurnedSoFarKcal: Double,
     /** Best estimate of what the whole day will come to. */
     val projectedBurnKcal: Double,
     val bmrPerDayKcal: Double,
@@ -261,7 +263,8 @@ object Energetics {
         return DayEnergy(
             intakeKcal = intake,
             rawIntakeKcal = rawIntake,
-            burnedSoFarKcal = burnedSoFar,
+            burnedSoFarKcal = correctedBurnedSoFar,
+            rawBurnedSoFarKcal = burnedSoFar,
             projectedBurnKcal = projectedBurn,
             bmrPerDayKcal = correctedBmrPerDay,
             typicalDayKcal = typicalDay,

@@ -22,7 +22,6 @@ enum class WidgetStatus { OK, NO_HEALTH_CONNECT, NEEDS_PERMISSION, ERROR }
 object WidgetKeys {
     val STATUS = stringPreferencesKey("status")
     val INTAKE = doublePreferencesKey("intake")
-    val RAW_INTAKE = doublePreferencesKey("raw_intake")
     val BURNED_SO_FAR = doublePreferencesKey("burned_so_far")
     val PROJECTED_BURN = doublePreferencesKey("projected_burn")
     val TYPICAL_DAY = doublePreferencesKey("typical_day")
@@ -55,7 +54,11 @@ object WidgetKeys {
 internal data class WidgetModel(
     val status: WidgetStatus,
     val intake: Double,
-    val rawIntake: Double,
+    /**
+     * Calibrated, like every other figure here. Widgets have no room to show a number
+     * twice, so they show the one the budget is actually built from; the app's Today
+     * card is where the tracker's own figure sits beside it.
+     */
     val burnedSoFar: Double,
     val projectedBurn: Double,
     val typicalDay: Double,
@@ -127,7 +130,6 @@ internal fun Preferences.toWidgetModel(): WidgetModel = WidgetModel(
         ?.let { runCatching { WidgetStatus.valueOf(it) }.getOrNull() }
         ?: WidgetStatus.ERROR,
     intake = this[WidgetKeys.INTAKE] ?: 0.0,
-    rawIntake = this[WidgetKeys.RAW_INTAKE] ?: 0.0,
     burnedSoFar = this[WidgetKeys.BURNED_SO_FAR] ?: 0.0,
     projectedBurn = this[WidgetKeys.PROJECTED_BURN] ?: 0.0,
     typicalDay = this[WidgetKeys.TYPICAL_DAY] ?: 0.0,
