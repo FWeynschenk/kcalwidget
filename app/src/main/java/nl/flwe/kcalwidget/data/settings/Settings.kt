@@ -20,7 +20,18 @@ data class AppSettings(
     val reminders: ReminderState = ReminderState(),
     val banking: BankingState = BankingState(),
     val onboardingCompleted: Boolean = false,
-)
+) {
+    /**
+     * The same settings with the corrections switched off, for showing what the apps
+     * actually recorded.
+     *
+     * Every calculation already asks these settings whether to calibrate, so flipping
+     * the one flag gives an uncalibrated view of the whole screen without threading a
+     * boolean through each figure and getting one of them wrong.
+     */
+    fun withoutCalibration(): AppSettings =
+        copy(features = features.copy(autoCalibration = false))
+}
 
 enum class Sex { MALE, FEMALE }
 

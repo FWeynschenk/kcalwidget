@@ -67,6 +67,10 @@ data class DayEnergy(
     val weeklySpareKcal: Double,
     /** The goal's daily allowance, negative to lose and positive to gain. */
     val goalDeltaKcal: Double,
+    /** The factor burn was counted at. 1.0 when calibration is off. */
+    val burnFactor: Double,
+    /** The factor intake was counted at. 1.0 when calibration is off. */
+    val intakeFactor: Double,
     /** True when learned calibration factors were applied to burn and intake. */
     val calibrationApplied: Boolean,
     /** True when the goal's own budget was below the floor and the floor won. */
@@ -276,6 +280,8 @@ object Energetics {
             carryState = if (settings.goal.useWeeklyBanking) carry.state else CarryState.OFF,
             weeklySpareKcal = weeklySpare,
             goalDeltaKcal = delta,
+            burnFactor = burnFactor,
+            intakeFactor = if (calibrating) settings.calibration.intakeFactor else 1.0,
             calibrationApplied = calibrating,
             intakeFloorApplied = goalBudget < floor,
             goalBudgetKcal = goalBudget,

@@ -270,6 +270,15 @@ private fun TodayCard(energy: DayEnergy?) {
             value = "${if (energy.surplusVsTypicalKcal >= 0) "+" else ""}" +
                 "${energy.surplusVsTypicalKcal.roundToInt()} kcal so far",
         )
+        if (energy.calibrationApplied) {
+            // The factors themselves, so every corrected figure above can be checked
+            // rather than taken on faith.
+            StatRow(
+                label = "Counted at",
+                value = "burn x${"%.2f".format(energy.burnFactor)}, " +
+                    "food x${"%.2f".format(energy.intakeFactor)}",
+            )
+        }
         StatRow("Weight used", "${"%.1f".format(energy.weightKg)} kg")
         StatRow("Burn source", energy.source.describe())
         Spacer(Modifier.height(8.dp))
@@ -287,10 +296,10 @@ private fun TodayCard(energy: DayEnergy?) {
         if (energy.calibrationApplied) {
             Spacer(Modifier.height(8.dp))
             Explainer(
-                "Calibration is on, so the typical day, projection, resting rate and budget " +
-                    "are corrected by what your weight trend says your numbers really are. " +
-                    "Burn so far and intake as logged are shown untouched, so you can still " +
-                    "see what your apps reported."
+                "Calibration is on, so every figure here is counted at the factors above, " +
+                    "which is what your weight trend says your numbers really are. Where " +
+                    "that changes a figure enough to matter, what your apps reported is " +
+                    "shown beneath it."
             )
         }
         if (energy.bankingApplied) {
