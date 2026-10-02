@@ -5,7 +5,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 import kotlin.math.abs
+import kotlin.math.exp
 
 /**
  * The complaint: on the divergence chart the measured line visibly trailed the readings.
@@ -44,13 +46,36 @@ class CentredSmoothingTest {
     }
 
     @Test
-    fun `the newest point has nothing to its right, so it is not claimed to be lag-free`() {
-        // It degrades towards a one-sided average rather than breaking, which is why the
-        // field is documented as retrospective only.
-        val trend = WeightTrend.from(steadyLoss())
-        val last = trend.points.last()
-        assertTrue(last.centredKg.isFinite())
-        assertTrue("still within reach of the real value", abs(last.centredKg - last.rawKg) < 0.5)
+    fun `the newest point sits on the line rather than above it`() {
+        // The reported bug, and the reason this is a local line and not a local mean.
+        val last = WeightTrend.from(steadyLoss()).points.last()
+        assertEquals("edge estimate drifted off the line", last.rawKg, last.centredKg, 0.05)
+    }
+
+    @Test
+    fun `the oldest point too, since both ends are one-sided`() {
+        val first = WeightTrend.from(steadyLoss()).points.first()
+        assertEquals(first.rawKg, first.centredKg, 0.05)
+    }
+
+    @Test
+    fun `a local mean would have failed that, which is why it is not used`() {
+        // Kept as the counter-example so the choice is not mistaken for decoration.
+        val readings = steadyLoss()
+        val target = readings.last().first
+        var weighted = 0.0
+        var total = 0.0
+        readings.forEach { (date, kg) ->
+            val gap = ChronoUnit.DAYS.between(target, date).toDouble()
+            if (abs(gap) <= WeightTrend.CENTRED_REACH_DAYS) {
+                val sigma = WeightTrend.CENTRED_SIGMA_DAYS
+                val w = exp(-(gap * gap) / (2 * sigma * sigma))
+                weighted += w * kg
+                total += w
+            }
+        }
+        val drift = weighted / total - readings.last().second
+        assertTrue("a local mean should read high; it was off by $drift", drift > 0.1)
     }
 
     @Test
