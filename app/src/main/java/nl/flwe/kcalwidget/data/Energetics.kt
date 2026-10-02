@@ -69,6 +69,8 @@ data class DayEnergy(
     val calibrationApplied: Boolean,
     /** True when the goal's own budget was below the floor and the floor won. */
     val intakeFloorApplied: Boolean,
+    /** What the goal alone came to, before the floor. Equals the budget when it did not bite. */
+    val goalBudgetKcal: Double,
     /** Positive means there is room left to eat, negative means over budget. */
     val remainingKcal: Double,
     /** Active kcal that would bring an over-budget day back to zero. 0 when under. */
@@ -273,6 +275,7 @@ object Energetics {
             goalDeltaKcal = delta,
             calibrationApplied = calibrating,
             intakeFloorApplied = goalBudget < floor,
+            goalBudgetKcal = goalBudget,
             remainingKcal = remaining,
             moveKcalToClear = moveToClear,
             walkMinutesToClear = (moveToClear / walkKcalPerMinute(weightKg)).roundToInt(),

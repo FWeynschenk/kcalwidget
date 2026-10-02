@@ -186,6 +186,12 @@ private fun BudgetBreakdown(energy: DayEnergy) {
     if (energy.bankingApplied && !energy.hasWeeklySpare && carry != 0) {
         StatRow("Carried from the past week", "${signed(carry)} kcal")
     }
+    // Without this the column stops adding up whenever the floor bites: the three rows
+    // above come to one number and Budget shows another, with only prose to bridge them.
+    if (energy.intakeFloorApplied) {
+        StatRow("Your goal would give", "${energy.goalBudgetKcal.roundToInt()} kcal")
+        StatRow("Minimum intake", "${energy.budgetKcal.roundToInt()} kcal")
+    }
     StatRow("Budget", "${energy.budgetKcal.roundToInt()} kcal")
     if (energy.hasWeeklySpare) {
         Spacer(Modifier.height(4.dp))

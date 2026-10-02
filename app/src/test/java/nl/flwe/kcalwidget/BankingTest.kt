@@ -1,5 +1,6 @@
 package nl.flwe.kcalwidget
 
+import nl.flwe.kcalwidget.data.HealthSnapshot
 import nl.flwe.kcalwidget.data.history.DayRow
 import nl.flwe.kcalwidget.data.history.HistoryRepository
 import nl.flwe.kcalwidget.data.settings.AppSettings
@@ -118,5 +119,64 @@ class CarryBreakdownTest {
         val carry = HistoryRepository.bankedCarry(emptyList(), losing)
         assertEquals(0.0, carry.totalKcal, 0.001)
         assertTrue(carry.days.isEmpty())
+    }
+}
+
+class FloorBreakdownTest {
+
+    private val halfDay = java.time.Duration.ofHours(12)
+
+    private fun snapshot(intake: Double, total: Double) = HealthSnapshot(
+        intakeKcal = intake,
+        totalBurnedKcal = total,
+        activeBurnedKcal = null,
+        steps = null,
+        basalKcalPerDay = null,
+        weightKg = 80.0,
+        lastWeighInAt = null,
+        burnOrigins = emptySet(),
+    )
+
+    /** An aggressive goal against a modest burn, so the floor has to bite. */
+    private val settings = AppSettings(
+        body = nl.flwe.kcalwidget.data.settings.BodyProfile(
+            sex = nl.flwe.kcalwidget.data.settings.Sex.MALE,
+            birthYear = LocalDate.now().year - 30,
+            heightCm = 180,
+            fallbackWeightKg = 80.0,
+        ),
+        goal = GoalSettings(weeklyChangeKg = -1.0, minIntakeFloorKcal = 1500),
+    )
+
+    @Test
+    fun `the goal's own figure survives the floor, so the column can still be followed`() {
+        val result = nl.flwe.kcalwidget.data.Energetics.compute(
+            snapshot(intake = 500.0, total = 1200.0),
+            settings,
+            halfDay,
+            null,
+        )
+        assertTrue("the floor should have bitten", result.intakeFloorApplied)
+        assertEquals(1500.0, result.budgetKcal, 0.001)
+        assertTrue("the pre-floor figure must be lower", result.goalBudgetKcal < result.budgetKcal)
+        // And it is exactly projection plus goal, which is what the rows above it show.
+        assertEquals(
+            result.projectedBurnKcal + result.goalDeltaKcal,
+            result.goalBudgetKcal,
+            0.001,
+        )
+    }
+
+    @Test
+    fun `without the floor the two figures agree`() {
+        val gentle = settings.copy(goal = GoalSettings(weeklyChangeKg = -0.25, minIntakeFloorKcal = 1200))
+        val result = nl.flwe.kcalwidget.data.Energetics.compute(
+            snapshot(intake = 500.0, total = 1400.0),
+            gentle,
+            halfDay,
+            null,
+        )
+        assertTrue(!result.intakeFloorApplied)
+        assertEquals(result.budgetKcal, result.goalBudgetKcal, 0.001)
     }
 }
