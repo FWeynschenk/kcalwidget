@@ -4,6 +4,7 @@ import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 import kotlin.math.exp
+import kotlin.math.max
 import kotlin.math.pow
 
 data class WeightPoint(
@@ -13,6 +14,10 @@ data class WeightPoint(
      * Causal smoothing: only the past is used, so this is what the trend looked like on
      * the day. Necessarily lags, which is the price of being computable before the next
      * reading exists.
+     *
+     * Nothing displays this. It seeds [centredKg] and stands in where there is too
+     * little around a point to fit a line. On a steady loss it sits above every reading,
+     * which is correct for what it measures and misleading for everything else.
      */
     val trendKg: Double,
     /**
@@ -84,12 +89,22 @@ data class WeightTrend(
                 previousDate = date
             }
 
+            // Computed once and used for all of it. Reading centredKg off the list that
+            // went in rather than the one that came out silently gives back the causal
+            // value, because that is what the field defaults to.
+            val smoothed = withCentred(points, byDay)
+
             return WeightTrend(
-                points = withCentred(points, byDay),
-                currentTrendKg = points.last().trendKg,
-                weeklyChangeKg = weeklySlope(points),
-                lastWeighIn = points.last().date,
-                weighInDays = points.size,
+                points = smoothed,
+                // The lag-free estimate, not the causal one. A fortnight of steady loss
+                // puts the EMA a few hundred grams above the scale, and this figure is
+                // what BMI, the goal's "to go", the milestone test, the forecast's
+                // starting point and the widget all read -- so the lag was not confined
+                // to a chart line, it was quietly in every derived number.
+                currentTrendKg = smoothed.last().centredKg,
+                weeklyChangeKg = weeklySlope(smoothed),
+                lastWeighIn = smoothed.last().date,
+                weighInDays = smoothed.size,
             )
         }
 
@@ -118,36 +133,104 @@ data class WeightTrend(
         private fun withCentred(
             points: List<WeightPoint>,
             byDay: Map<LocalDate, Double>,
-        ): List<WeightPoint> = points.map { point ->
-            // Weighted sums for a straight line through the neighbourhood, y = a + b*gap,
-            // read off at gap = 0. Fitting the line rather than averaging the values is
-            // the whole point; see the note above.
+        ): List<WeightPoint> {
+            val dates = byDay.keys.toList()
+            val values = byDay.values.toDoubleArray()
+            var robustness = DoubleArray(dates.size) { 1.0 }
+            var fitted = DoubleArray(dates.size)
+
+            repeat(ROBUST_PASSES + 1) { pass ->
+                dates.indices.forEach { i ->
+                    fitted[i] = fitAt(dates[i], dates, values, robustness)
+                }
+                if (pass < ROBUST_PASSES) {
+                    robustness = robustWeights(values, fitted)
+                }
+            }
+
+            val byDate = dates.indices.associate { dates[it] to fitted[it] }
+            return points.map { point ->
+                byDate[point.date]?.let { point.copy(centredKg = it) } ?: point
+            }
+        }
+
+        /** The local line through [target]'s neighbourhood, read off at [target] itself. */
+        private fun fitAt(
+            target: LocalDate,
+            dates: List<LocalDate>,
+            values: DoubleArray,
+            robustness: DoubleArray,
+        ): Double {
             var sw = 0.0
             var swx = 0.0
             var swy = 0.0
             var swxx = 0.0
             var swxy = 0.0
-            byDay.forEach { (date, raw) ->
-                val gap = ChronoUnit.DAYS.between(point.date, date).toDouble()
+            dates.indices.forEach { i ->
+                val gap = ChronoUnit.DAYS.between(target, dates[i]).toDouble()
                 if (abs(gap) <= CENTRED_REACH_DAYS) {
-                    val w = exp(-(gap * gap) / (2 * CENTRED_SIGMA_DAYS * CENTRED_SIGMA_DAYS))
-                    sw += w
-                    swx += w * gap
-                    swy += w * raw
-                    swxx += w * gap * gap
-                    swxy += w * gap * raw
+                    val w = exp(-(gap * gap) / (2 * CENTRED_SIGMA_DAYS * CENTRED_SIGMA_DAYS)) *
+                        robustness[i]
+                    if (w > 0.0) {
+                        sw += w
+                        swx += w * gap
+                        swy += w * values[i]
+                        swxx += w * gap * gap
+                        swxy += w * gap * values[i]
+                    }
                 }
             }
-            if (sw <= 0.0) return@map point
+            if (sw <= 0.0) return values[dates.indexOf(target)]
 
             val denominator = sw * swxx - swx * swx
             // One reading, or several on a single day: no slope to fit, and the mean is
             // then both all there is and correct.
-            if (abs(denominator) < 1e-9) return@map point.copy(centredKg = swy / sw)
+            if (abs(denominator) < 1e-9) return swy / sw
 
             val slope = (sw * swxy - swx * swy) / denominator
-            point.copy(centredKg = (swy - slope * swx) / sw)
+            return (swy - slope * swx) / sw
         }
+
+        /**
+         * Tukey's biweight over the residuals, which is what makes the local line safe.
+         *
+         * A local line is unbiased on a trend and, for exactly the same reason, credulous
+         * about an outlier sitting at the edge of the data: it reads a single bad morning
+         * as the start of a slope and follows it. Down-weighting whatever the first pass
+         * could not explain, then fitting again, keeps the lag-free behaviour on a real
+         * trend and discards the four kilos of water. Points more than six median
+         * deviations out are dropped entirely.
+         */
+        private fun robustWeights(values: DoubleArray, fitted: DoubleArray): DoubleArray {
+            val residuals = DoubleArray(values.size) { values[it] - fitted[it] }
+            // Floored, because a run of consistent readings drives the median residual to
+            // zero and then every deviation looks infinitely suspicious -- including the
+            // real ones. A quarter of a kilo is about what water and gut contents move a
+            // scale between mornings, so nothing inside that is treated as a signal.
+            val spread = max(median(residuals.map { abs(it) }), MIN_RESIDUAL_SPREAD_KG)
+
+            return DoubleArray(values.size) {
+                val u = residuals[it] / (6.0 * spread)
+                if (abs(u) >= 1.0) 0.0 else (1.0 - u * u).pow(2)
+            }
+        }
+
+        private fun median(xs: List<Double>): Double {
+            if (xs.isEmpty()) return 0.0
+            val sorted = xs.sorted()
+            val mid = sorted.size / 2
+            return if (sorted.size % 2 == 1) sorted[mid] else (sorted[mid - 1] + sorted[mid]) / 2
+        }
+
+        /** Re-weighting passes. One is enough to shrug off a stray morning; two is ample. */
+        const val ROBUST_PASSES = 2
+
+        /**
+         * The smallest believable spread of residuals, in kg. Day-to-day scale noise does
+         * not go below about this, so treating a tighter run as noiseless would make the
+         * smoother reject ordinary variation as though it were an outlier.
+         */
+        const val MIN_RESIDUAL_SPREAD_KG = 0.25
 
         /** Width of the symmetric smoother. Comparable in effect to the causal alpha. */
         const val CENTRED_SIGMA_DAYS = 3.5
@@ -155,12 +238,19 @@ data class WeightTrend(
         /** Beyond this a reading contributes nothing worth the arithmetic. */
         const val CENTRED_REACH_DAYS = 10.0
 
-        /** Least-squares slope of the smoothed series, converted to kg per week. */
+        /**
+         * Least-squares slope of the smoothed series, converted to kg per week.
+         *
+         * Over the lag-free series, so one object does not carry two different ideas of
+         * what the weight was doing. A constant lag leaves a slope unchanged, so this is
+         * near enough the same number either way -- but mixing the two is how they stop
+         * agreeing the moment the trend bends.
+         */
         private fun weeklySlope(points: List<WeightPoint>): Double? {
             if (points.size < MIN_POINTS_FOR_SLOPE) return null
             val origin = points.first().date
             val xs = points.map { ChronoUnit.DAYS.between(origin, it.date).toDouble() }
-            val ys = points.map { it.trendKg }
+            val ys = points.map { it.centredKg }
             val meanX = xs.average()
             val meanY = ys.average()
             var numerator = 0.0

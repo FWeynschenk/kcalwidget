@@ -98,3 +98,76 @@ class CentredSmoothingTest {
         assertEquals(90.0, cluster.centredKg, 0.05)
     }
 }
+
+/**
+ * The lag was never confined to a chart line. currentTrendKg feeds BMI, the goal's "to
+ * go", the milestone test, the forecast's starting point and the widget, so a trend
+ * reading high meant every one of those was too.
+ */
+class CurrentTrendTest {
+
+    private val start = LocalDate.of(2026, 8, 1)
+
+    private fun steadyLoss(days: Int = 40, perDay: Double = -0.07) =
+        (0 until days).map { start.plusDays(it.toLong()) to 95.0 + perDay * it }
+
+    @Test
+    fun `the reported trend weight is not above the scale during a steady loss`() {
+        val readings = steadyLoss()
+        val trend = WeightTrend.from(readings)
+        val latest = readings.last().second
+        assertEquals("trend weight drifted off the scale", latest, trend.currentTrendKg!!, 0.05)
+    }
+
+    @Test
+    fun `the causal value is the one that would have read high`() {
+        val readings = steadyLoss()
+        val points = WeightTrend.from(readings).points
+        val drift = points.last().trendKg - readings.last().second
+        assertTrue("the EMA should read high; it was off by $drift", drift > 0.1)
+        assertTrue(
+            "and the reported figure should not inherit that",
+            abs(points.last().centredKg - readings.last().second) < drift / 2,
+        )
+    }
+
+    @Test
+    fun `the measured rate is the real one, not the EMA's shallower version`() {
+        // -0.07 kg a day is -0.49 a week, and that is what should be reported.
+        val readings = steadyLoss()
+        val trend = WeightTrend.from(readings)
+        assertEquals(-0.49, trend.weeklyChangeKg!!, 0.02)
+
+        // The EMA's lag is not constant: it starts at the first reading and converges,
+        // which tilts a line fitted through it. Fitting the causal series understated
+        // this loss by about a fifth, and that figure is what calibration compares the
+        // calories against -- so the error landed straight in the reported bias.
+        val origin = readings.first().first
+        val xs = trend.points.map {
+            ChronoUnit.DAYS.between(origin, it.date).toDouble()
+        }
+        val ys = trend.points.map { it.trendKg }
+        val mx = xs.average()
+        val my = ys.average()
+        var num = 0.0
+        var den = 0.0
+        xs.indices.forEach { i ->
+            num += (xs[i] - mx) * (ys[i] - my)
+            den += (xs[i] - mx) * (xs[i] - mx)
+        }
+        val causalSlope = num / den * 7.0
+        assertTrue(
+            "the causal slope should be shallower; it was $causalSlope",
+            causalSlope > trend.weeklyChangeKg!! + 0.05,
+        )
+    }
+
+    @Test
+    fun `a gain reads low under the causal trend and correct under the reported one`() {
+        val gaining = (0 until 40).map { start.plusDays(it.toLong()) to 70.0 + 0.05 * it }
+        val trend = WeightTrend.from(gaining)
+        val latest = gaining.last().second
+        assertTrue("the EMA should read low", trend.points.last().trendKg < latest - 0.1)
+        assertEquals(latest, trend.currentTrendKg!!, 0.05)
+    }
+}
