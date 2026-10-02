@@ -287,10 +287,12 @@ private fun DivergenceCard(series: List<DivergencePoint>) {
             "Drag across the chart to read any day. Grey dots are what the scale said. " +
                 "Blue is what your food and burn numbers predict; green is your weight " +
                 "smoothed evenly across the days either side, so it tracks the dots " +
-                "rather than trailing them. They start together; how " +
-                "far apart they end is the difference being measured. The span is the " +
-                "calibration window itself, so it is not adjustable: a shorter view would " +
-                "show a gap other than the one being measured."
+                "rather than trailing them. The two start together and the space between " +
+                "them is the disagreement. The figure above is fitted across the whole " +
+                "window rather than read off the two ends, so it will not match the final " +
+                "gap exactly: a line through every day is harder to fool than two points. " +
+                "The span is the calibration window itself and is not adjustable, since a " +
+                "shorter view would show a gap other than the one being measured."
         )
     }
 }
