@@ -81,7 +81,7 @@ object WidgetRepository {
                 // draws it, and banking needs the carried balance. It is a much heavier
                 // query than the day itself, and widgets refresh often.
                 val needsTrend = idsByKind[TrendWidget::class.java]?.isNotEmpty() == true
-                val days = if (needsTrend) TREND_DAYS else HistoryRepository.BANKING_DAYS + 1
+                val days = if (needsTrend) TREND_DAYS else HistoryRepository.BANKING_DAYS
                 if (needsTrend || settings.goal.useWeeklyBanking) {
                     history = runCatching {
                         HistoryRepository(context, health).load(settings, days)

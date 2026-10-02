@@ -57,11 +57,15 @@ class CarrySmoothingTest {
     }
 
     @Test
-    fun `yesterday counts fully and a fortnight ago barely counts`() {
+    fun `yesterday counts fully and the far edge barely counts`() {
         assertEquals(1.0, HistoryRepository.ageWeight(1), 0.001)
         assertEquals(0.5, HistoryRepository.ageWeight(5), 0.001)
         assertEquals(0.25, HistoryRepository.ageWeight(9), 0.001)
-        assertTrue(HistoryRepository.ageWeight(21) < 0.05)
+        // The oldest day in the window, whose departure must not be felt.
+        val edge = HistoryRepository.ageWeight(HistoryRepository.CARRY_WINDOW_DAYS.toLong())
+        assertTrue("edge weight was $edge", edge < 0.12)
+        val worstStep = edge * HistoryRepository.MAX_DAY_CONTRIBUTION_KCAL
+        assertTrue("a day falling out could move the carry $worstStep kcal", worstStep < 80.0)
     }
 
     @Test
