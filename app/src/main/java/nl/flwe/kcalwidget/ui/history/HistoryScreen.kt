@@ -11,7 +11,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -29,6 +31,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import nl.flwe.kcalwidget.data.history.BankedCarry
@@ -68,6 +71,9 @@ private const val FORECAST_MARKS = 12L
 
 private val DAY_LABEL = DateTimeFormatter.ofPattern("d MMM")
 
+/** Enough to scroll through; beyond this it is a job for the CSV. */
+private const val DAYS_LISTED = 60
+
 /**
  * The evidence behind every other number in the app.
  *
@@ -82,6 +88,12 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     // Ninety days of aggregates is too heavy to read on every resume, so it is fetched
     // when this screen is actually opened.
     LaunchedEffect(Unit) { viewModel.loadHistory() }
+
+    // Calibrated by default: the corrected figures are the ones the budget is enforced
+    // with, so they are the ones that answer "how am I doing". The raw numbers are a
+    // toggle away for anyone who wants to see what the apps actually reported.
+    var calibrated by remember { mutableStateOf(true) }
+    val basis = if (calibrated) state.settings else state.settings.withoutCalibration()
 
     SettingsScaffold("History", onBack) {
         if (history == null || history.rows.isEmpty()) {
@@ -103,24 +115,122 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
             return@SettingsScaffold
         }
 
-        item { SummaryCard(history, state.settings) }
-        item { NetChartCard(history, state.settings) }
+        if (state.settings.features.autoCalibration) {
+            item { BasisCard(calibrated, state.settings) { calibrated = it } }
+        }
+        item { SummaryCard(history, basis) }
+        item { NetChartCard(history, basis) }
         if (state.settings.goal.useWeeklyBanking) {
             item { CarryCard(history.carry, state.settings) }
         }
         item { WeightChartCard(history, state.settings) }
         item { ExportCard(history, state.settings) }
-        item {
-            SectionCard("Days") {
-                Explainer(
-                    "Newest first. Net is intake minus burn, so negative is a deficit. " +
-                        "These are the figures your apps recorded, before any calibration " +
-                        "correction, which is why they can differ from today's budget."
-                )
-            }
+        item { DaysCard(history.rows.reversed().take(DAYS_LISTED), basis, calibrated) }
+    }
+}
+
+/**
+ * Which figures the screen shows.
+ *
+ * Only offered when calibration is actually on; without it the two are the same numbers
+ * and the choice would be noise.
+ */
+@Composable
+private fun BasisCard(calibrated: Boolean, settings: AppSettings, onChange: (Boolean) -> Unit) {
+    SectionCard("Figures") {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            FilterChip(
+                selected = calibrated,
+                onClick = { onChange(true) },
+                label = { Text("Calibrated", style = MaterialTheme.typography.labelMedium) },
+            )
+            FilterChip(
+                selected = !calibrated,
+                onClick = { onChange(false) },
+                label = { Text("As logged", style = MaterialTheme.typography.labelMedium) },
+            )
         }
-        val recent = history.rows.reversed().take(60)
-        items(recent.size) { index -> DayRowCard(recent[index]) }
+        Explainer(
+            if (calibrated) {
+                "Burn counted at ${"%.2f".format(settings.calibration.expenditureFactor)} " +
+                    "and food at ${"%.2f".format(settings.calibration.intakeFactor)} of what " +
+                    "your apps recorded, which is how your budget is worked out. Switch to " +
+                    "see the recorded numbers instead."
+            } else {
+                "Exactly what your apps recorded. Your budget is not worked out from these, " +
+                    "so a day can look fine here and still take something off tomorrow."
+            }
+        )
+    }
+}
+
+/**
+ * Every day on one card, four columns wide.
+ *
+ * A card per day was sixty cards of four rows each: correct, and unreadable past the
+ * first week. A table loses nothing that was being read.
+ */
+@Composable
+private fun DaysCard(rows: List<DayRow>, basis: AppSettings, calibrated: Boolean) {
+    SectionCard("Days") {
+        Explainer(
+            if (calibrated) {
+                "Newest first, calibrated. Net is food minus burn, so negative is a deficit."
+            } else {
+                "Newest first, exactly as recorded. Net is food minus burn, so negative is " +
+                    "a deficit."
+            }
+        )
+        Spacer(Modifier.height(8.dp))
+        DayGrid(null, "Food", "Burn", "Net", "kg", header = true)
+        HorizontalDivider()
+        rows.forEach { row ->
+            val factorIntake = intakeFactor(basis)
+            val factorBurn = burnFactor(basis)
+            val net = HistoryRepository.calibratedNet(row, basis)
+            DayGrid(
+                date = DAY_LABEL.format(row.date),
+                food = row.intakeKcal?.let { (it * factorIntake).roundToInt().toString() } ?: "—",
+                burn = row.burnKcal?.let { (it * factorBurn).roundToInt().toString() } ?: "—",
+                net = net?.let { signed(it) } ?: "—",
+                weight = row.weightKg?.let { "%.1f".format(it) } ?: "",
+                netColour = net?.let { if (it > 0) OVER else UNDER },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DayGrid(
+    date: String?,
+    food: String,
+    burn: String,
+    net: String,
+    weight: String,
+    header: Boolean = false,
+    netColour: Color? = null,
+) {
+    val style = if (header) {
+        MaterialTheme.typography.labelSmall
+    } else {
+        MaterialTheme.typography.bodySmall
+    }
+    Row(modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(date ?: "", style = style, modifier = Modifier.weight(1.5f))
+        Text(food, style = style, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+        Text(burn, style = style, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
+        Text(
+            net,
+            style = style,
+            color = netColour ?: LocalContentColor.current,
+            fontWeight = if (netColour != null) FontWeight.Medium else null,
+            modifier = Modifier.weight(1.1f),
+            textAlign = TextAlign.End,
+        )
+        Text(weight, style = style, modifier = Modifier.weight(0.9f), textAlign = TextAlign.End)
     }
 }
 
@@ -366,6 +476,12 @@ private fun CarryCard(carry: BankedCarry, settings: AppSettings) {
     }
 }
 
+private fun burnFactor(settings: AppSettings) =
+    if (settings.features.autoCalibration) settings.calibration.expenditureFactor else 1.0
+
+private fun intakeFactor(settings: AppSettings) =
+    if (settings.features.autoCalibration) settings.calibration.intakeFactor else 1.0
+
 private fun signed(value: Double, decimals: Int = 0): String {
     val sign = if (value >= 0) "+" else ""
     return if (decimals == 0) "$sign${value.roundToInt()}" else "$sign${"%.${decimals}f".format(value)}"
@@ -551,26 +667,6 @@ private fun ExportCard(history: History, settings: AppSettings) {
         OutlinedButton(onClick = { launcher.launch("kcal-balance-history.csv") }) {
             Text("Export CSV")
         }
-    }
-}
-
-@Composable
-private fun DayRowCard(row: DayRow) {
-    SectionCard(row.date.format(DAY_LABEL)) {
-        StatRow("Eaten", row.intakeKcal?.let { "${it.roundToInt()} kcal" } ?: "—")
-        StatRow("Burned", row.burnKcal?.let { "${it.roundToInt()} kcal" } ?: "—")
-        row.netKcal?.let { net ->
-            Row(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                Text("Net", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                Text(
-                    text = "${if (net > 0) "+" else ""}${net.roundToInt()} kcal",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    color = if (net > 0) OVER else UNDER,
-                )
-            }
-        }
-        row.weightKg?.let { StatRow("Weighed", "${"%.1f".format(it)} kg") }
     }
 }
 
