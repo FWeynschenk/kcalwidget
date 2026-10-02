@@ -369,7 +369,7 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
             ChronoUnit.DAYS.between(today, it.date).let { d -> d > 0 && d % step == 0L }
         }
 
-        val all = points.flatMap { listOf(it.rawKg, it.trendKg) } +
+        val all = points.flatMap { listOf(it.rawKg, it.centredKg) } +
             future.flatMap { listOf(it.lowKg, it.highKg) }
         val min = all.min()
         val max = all.max()
@@ -401,9 +401,9 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
                         title = chartDate(point.date),
                         values = listOf(
                             "On the scale" to "%.1f kg".format(point.rawKg),
-                            "Smoothed trend" to "%.1f kg".format(point.trendKg),
+                            "Smoothed trend" to "%.1f kg".format(point.centredKg),
                             "Since ${chartDate(points.first().date)}" to
-                                "${signed(point.trendKg - points.first().trendKg, 1)} kg",
+                                "${signed(point.centredKg - points.first().centredKg, 1)} kg",
                         ),
                     )
                 } else {
@@ -428,14 +428,14 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
             if (future.isNotEmpty()) {
                 val last = points.last()
                 val band = Path().apply {
-                    moveTo(x(last.date), y(last.trendKg))
+                    moveTo(x(last.date), y(last.centredKg))
                     future.forEach { lineTo(x(it.date), y(it.highKg)) }
                     future.reversed().forEach { lineTo(x(it.date), y(it.lowKg)) }
                     close()
                 }
                 drawPath(band, color = FORECAST, alpha = 0.18f)
 
-                var from = Offset(x(last.date), y(last.trendKg))
+                var from = Offset(x(last.date), y(last.centredKg))
                 future.forEach { point ->
                     val to = Offset(x(point.date), y(point.midKg))
                     drawLine(
@@ -459,14 +459,14 @@ private fun WeightChartCard(history: History, settings: AppSettings) {
             for (i in 0 until points.size - 1) {
                 drawLine(
                     color = TREND,
-                    start = Offset(x(points[i].date), y(points[i].trendKg)),
-                    end = Offset(x(points[i + 1].date), y(points[i + 1].trendKg)),
+                    start = Offset(x(points[i].date), y(points[i].centredKg)),
+                    end = Offset(x(points[i + 1].date), y(points[i + 1].centredKg)),
                     strokeWidth = 4f,
                 )
             }
 
             val marked = if (selected < points.size) {
-                Offset(x(points[selected].date), y(points[selected].trendKg))
+                Offset(x(points[selected].date), y(points[selected].centredKg))
             } else {
                 val point = future[selected - points.size]
                 Offset(x(point.date), y(point.midKg))
@@ -547,7 +547,7 @@ private fun DayRowCard(row: DayRow) {
  * the row. A spreadsheet opens it without complaint, which is what makes it dangerous.
  */
 internal fun toCsv(history: History): String {
-    val trendByDate = history.trend.points.associate { it.date to it.trendKg }
+    val trendByDate = history.trend.points.associate { it.date to it.centredKg }
     return buildString {
         appendLine("date,intake_kcal,burn_kcal,net_kcal,weight_kg,trend_kg")
         history.rows.forEach { row ->

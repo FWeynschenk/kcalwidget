@@ -141,7 +141,7 @@ object WidgetRepository {
                         h.rows.takeLast(TREND_DAYS).mapNotNull { it.netKcal }
                     )
                     prefs[WidgetKeys.WEIGHT_SERIES] = encodeSeries(
-                        h.trend.points.takeLast(TREND_DAYS * 2).map { it.trendKg },
+                        h.trend.points.takeLast(TREND_DAYS * 2).map { it.centredKg },
                         decimals = 2,
                     )
                 }
