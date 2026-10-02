@@ -105,22 +105,48 @@ data class WeightTrend(
          * A Gaussian over the actual dates rather than over positions, because weigh-ins
          * are irregular and a positional window would weight a cluster of three days the
          * same as three weeks.
+         *
+         * Local *line*, not local average, and that distinction is the difference between
+         * working and not. A weighted mean has no neighbours to its right at the newest
+         * point, so it quietly becomes a backwards-only average: on a falling weight it
+         * averages in older, heavier readings and sits a few hundred grams above the
+         * scale. That is the boundary bias of a kernel mean, and it lands exactly where
+         * everyone looks. Fitting a line and taking its value at the point carries the
+         * local slope into the estimate instead of flattening it, so both ends are
+         * unbiased for anything locally straight -- which a weight trend is.
          */
         private fun withCentred(
             points: List<WeightPoint>,
             byDay: Map<LocalDate, Double>,
         ): List<WeightPoint> = points.map { point ->
-            var weighted = 0.0
-            var total = 0.0
+            // Weighted sums for a straight line through the neighbourhood, y = a + b*gap,
+            // read off at gap = 0. Fitting the line rather than averaging the values is
+            // the whole point; see the note above.
+            var sw = 0.0
+            var swx = 0.0
+            var swy = 0.0
+            var swxx = 0.0
+            var swxy = 0.0
             byDay.forEach { (date, raw) ->
                 val gap = ChronoUnit.DAYS.between(point.date, date).toDouble()
                 if (abs(gap) <= CENTRED_REACH_DAYS) {
                     val w = exp(-(gap * gap) / (2 * CENTRED_SIGMA_DAYS * CENTRED_SIGMA_DAYS))
-                    weighted += w * raw
-                    total += w
+                    sw += w
+                    swx += w * gap
+                    swy += w * raw
+                    swxx += w * gap * gap
+                    swxy += w * gap * raw
                 }
             }
-            if (total > 0) point.copy(centredKg = weighted / total) else point
+            if (sw <= 0.0) return@map point
+
+            val denominator = sw * swxx - swx * swx
+            // One reading, or several on a single day: no slope to fit, and the mean is
+            // then both all there is and correct.
+            if (abs(denominator) < 1e-9) return@map point.copy(centredKg = swy / sw)
+
+            val slope = (sw * swxy - swx * swy) / denominator
+            point.copy(centredKg = (swy - slope * swx) / sw)
         }
 
         /** Width of the symmetric smoother. Comparable in effect to the causal alpha. */
