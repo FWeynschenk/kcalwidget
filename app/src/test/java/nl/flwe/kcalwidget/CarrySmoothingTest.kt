@@ -113,3 +113,67 @@ class CarrySmoothingTest {
         assertTrue("the old scheme should show a cliff, worst was ${steps.max()}", steps.max() > 600.0)
     }
 }
+
+/**
+ * A day was green on the net-balance chart and negative in the carry on the same screen.
+ * The chart judged raw figures; the carry, the budget and the goal all judge calibrated
+ * ones. Two verdicts on one day is worse than either verdict.
+ */
+class CalibratedVerdictTest {
+
+    private val start = LocalDate.of(2026, 10, 1)
+
+    private val calibrated = AppSettings(
+        goal = GoalSettings(weeklyChangeKg = -0.9),
+        features = nl.flwe.kcalwidget.data.settings.FeatureFlags(autoCalibration = true),
+        calibration = nl.flwe.kcalwidget.data.settings.CalibrationState(
+            expenditureFactor = 0.924,
+            intakeFactor = 1.008,
+        ),
+    )
+
+    /** The reported day: 2800 burned, 1854 eaten, a 990 kcal goal. */
+    private val day = DayRow(start, 1854.0, 2800.0, null)
+
+    @Test
+    fun `a day barely missed on raw figures is properly missed on calibrated ones`() {
+        val raw = day.netKcal!!
+        val counted = HistoryRepository.calibratedNet(day, calibrated)!!
+        val target = calibrated.goal.dailyEnergyDelta
+
+        // Above the target is a miss. As logged it is 44 kcal short of the goal; counted
+        // it is 271, which is the figure the carry card shows for that day.
+        assertEquals(44.0, raw - target, 1.0)
+        assertEquals(271.0, counted - target, 2.0)
+    }
+
+    @Test
+    fun `the chart's verdict and the carry's sign cannot disagree`() {
+        val target = calibrated.goal.dailyEnergyDelta
+        val counted = HistoryRepository.calibratedNet(day, calibrated)!!
+        val contribution = HistoryRepository.bankedCarry(listOf(day), calibrated).days.single()
+
+        // Met the goal, as the chart colours it, is exactly a non-negative contribution.
+        val metOnChart = counted <= target
+        assertEquals(metOnChart, contribution.kcal >= 0.0)
+    }
+
+    @Test
+    fun `the carry keeps the figure the day list shows, so the two can be reconciled`() {
+        val contribution = HistoryRepository.bankedCarry(listOf(day), calibrated).days.single()
+        assertEquals(-44.0, contribution.asLoggedKcal, 1.0)
+        assertTrue(
+            "and the counted figure is the lower one",
+            contribution.clippedKcal < contribution.asLoggedKcal,
+        )
+    }
+
+    @Test
+    fun `with calibration off the two figures agree`() {
+        val plain = calibrated.copy(
+            features = nl.flwe.kcalwidget.data.settings.FeatureFlags(autoCalibration = false),
+        )
+        val contribution = HistoryRepository.bankedCarry(listOf(day), plain).days.single()
+        assertEquals(contribution.asLoggedKcal, contribution.rawKcal, 0.001)
+    }
+}

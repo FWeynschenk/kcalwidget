@@ -69,6 +69,12 @@ data class CarryDay(
     val goalDeltaKcal: Double,
     /** How much this day still counts, 1.0 the morning after and halving every few days. */
     val weight: Double,
+    /**
+     * What the day came to from the figures the apps reported, before any correction.
+     * Kept rather than recovered by dividing the factors back out, which only works
+     * while nothing else has touched them.
+     */
+    val asLoggedKcal: Double = 0.0,
 ) {
     /** What the day actually came to. Positive means it left something over. */
     val rawKcal: Double get() = (burnKcal + goalDeltaKcal) - intakeKcal
@@ -439,6 +445,7 @@ class HistoryRepository(
                         intakeKcal = row.intakeKcal!! * intakeFactor,
                         goalDeltaKcal = delta,
                         weight = ageWeight(age),
+                        asLoggedKcal = (row.burnKcal + delta) - row.intakeKcal!!,
                     )
                 }
             if (days.isEmpty()) return BankedCarry.NONE
@@ -459,6 +466,25 @@ class HistoryRepository(
          */
         internal fun ageWeight(age: Long): Double =
             0.5.pow((age - 1).coerceAtLeast(0L) / CARRY_HALF_LIFE_DAYS)
+
+        /**
+         * Intake minus burn for one day, corrected exactly as the budget and the carry
+         * correct it.
+         *
+         * The raw figures in the day list are what the apps reported and stay that way,
+         * but anything that judges a day -- met the goal or missed it -- has to use the
+         * same numbers the goal is actually enforced with. Judging the chart raw while
+         * the carry runs calibrated is how a day ends up green on one screen and taking
+         * 271 kcal off the next.
+         */
+        fun calibratedNet(row: DayRow, settings: AppSettings): Double? {
+            val intake = row.intakeKcal ?: return null
+            val burn = row.burnKcal ?: return null
+            val calibrating = settings.features.autoCalibration
+            val burnFactor = if (calibrating) settings.calibration.expenditureFactor else 1.0
+            val intakeFactor = if (calibrating) settings.calibration.intakeFactor else 1.0
+            return intake * intakeFactor - burn * burnFactor
+        }
 
         /** The carry as a single number, which is all the budget needs. */
         internal fun bankedAdjustment(rows: List<DayRow>, settings: AppSettings): Double =
