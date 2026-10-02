@@ -17,6 +17,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
@@ -95,7 +96,17 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
     var calibrated by remember { mutableStateOf(true) }
     val basis = if (calibrated) state.settings else state.settings.withoutCalibration()
 
-    SettingsScaffold("History", onBack) {
+    SettingsScaffold(
+        title = "History",
+        onBack = onBack,
+        actions = {
+            if (state.settings.features.autoCalibration) {
+                TextButton(onClick = { calibrated = !calibrated }) {
+                    Text(if (calibrated) "Calibrated" else "As logged")
+                }
+            }
+        },
+    ) {
         if (history == null || history.rows.isEmpty()) {
             item {
                 SectionCard("History") {
@@ -116,49 +127,34 @@ fun HistoryScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         }
 
         if (state.settings.features.autoCalibration) {
-            item { BasisCard(calibrated, state.settings) { calibrated = it } }
+            item { BasisNote(calibrated, state.settings) }
         }
         item { SummaryCard(history, basis) }
         item { NetChartCard(history, basis) }
         if (state.settings.goal.useWeeklyBanking) {
-            item { CarryCard(history.carry, state.settings) }
+            item { CarryCard(history.carry, state.settings, calibrated) }
         }
         item { WeightChartCard(history, state.settings) }
         item { ExportCard(history, state.settings) }
-        item { DaysCard(history.rows.reversed().take(DAYS_LISTED), basis, calibrated) }
+        item { DaysCard(history.rows.reversed().take(DAYS_LISTED), state.settings, calibrated) }
     }
 }
 
 /**
- * Which figures the screen shows.
+ * What the toggle in the bar is currently doing.
  *
- * Only offered when calibration is actually on; without it the two are the same numbers
- * and the choice would be noise.
+ * The control itself lives in the app bar so it stays reachable while scrolling; this is
+ * only the explanation, which does not.
  */
 @Composable
-private fun BasisCard(calibrated: Boolean, settings: AppSettings, onChange: (Boolean) -> Unit) {
-    SectionCard("Figures") {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(
-                selected = calibrated,
-                onClick = { onChange(true) },
-                label = { Text("Calibrated", style = MaterialTheme.typography.labelMedium) },
-            )
-            FilterChip(
-                selected = !calibrated,
-                onClick = { onChange(false) },
-                label = { Text("As logged", style = MaterialTheme.typography.labelMedium) },
-            )
-        }
+private fun BasisNote(calibrated: Boolean, settings: AppSettings) {
+    SectionCard(if (calibrated) "Calibrated figures" else "Figures as logged") {
         Explainer(
             if (calibrated) {
                 "Burn counted at ${"%.2f".format(settings.calibration.expenditureFactor)} " +
                     "and food at ${"%.2f".format(settings.calibration.intakeFactor)} of what " +
-                    "your apps recorded, which is how your budget is worked out. Switch to " +
-                    "see the recorded numbers instead."
+                    "your apps recorded, which is how your budget is worked out. Use the " +
+                    "button in the bar to see the recorded numbers instead."
             } else {
                 "Exactly what your apps recorded. Your budget is not worked out from these, " +
                     "so a day can look fine here and still take something off tomorrow."
@@ -174,30 +170,42 @@ private fun BasisCard(calibrated: Boolean, settings: AppSettings, onChange: (Boo
  * first week. A table loses nothing that was being read.
  */
 @Composable
-private fun DaysCard(rows: List<DayRow>, basis: AppSettings, calibrated: Boolean) {
+private fun DaysCard(rows: List<DayRow>, settings: AppSettings, calibrated: Boolean) {
+    val shown = if (calibrated) settings else settings.withoutCalibration()
+    val other = if (calibrated) settings.withoutCalibration() else settings
+
     SectionCard("Days") {
         Explainer(
             if (calibrated) {
-                "Newest first, calibrated. Net is food minus burn, so negative is a deficit."
+                "Newest first, calibrated. Net is food minus burn, so negative is a " +
+                    "deficit; the grey figure beneath each net is the same day as your " +
+                    "apps recorded it."
             } else {
-                "Newest first, exactly as recorded. Net is food minus burn, so negative is " +
-                    "a deficit."
+                "Newest first, exactly as recorded. Net is food minus burn, so negative " +
+                    "is a deficit; the grey figure beneath each net is the same day " +
+                    "calibrated."
             }
         )
         Spacer(Modifier.height(8.dp))
         DayGrid(null, "Food", "Burn", "Net", "kg", header = true)
         HorizontalDivider()
         rows.forEach { row ->
-            val factorIntake = intakeFactor(basis)
-            val factorBurn = burnFactor(basis)
-            val net = HistoryRepository.calibratedNet(row, basis)
+            val net = HistoryRepository.calibratedNet(row, shown)
+            val alternate = HistoryRepository.calibratedNet(row, other)
             DayGrid(
                 date = DAY_LABEL.format(row.date),
-                food = row.intakeKcal?.let { (it * factorIntake).roundToInt().toString() } ?: "—",
-                burn = row.burnKcal?.let { (it * factorBurn).roundToInt().toString() } ?: "—",
+                food = row.intakeKcal
+                    ?.let { (it * intakeFactor(shown)).roundToInt().toString() } ?: "—",
+                burn = row.burnKcal
+                    ?.let { (it * burnFactor(shown)).roundToInt().toString() } ?: "—",
                 net = net?.let { signed(it) } ?: "—",
                 weight = row.weightKg?.let { "%.1f".format(it) } ?: "",
                 netColour = net?.let { if (it > 0) OVER else UNDER },
+                // Both, here and only here: this is the detail view, and seeing the two
+                // side by side is the point of it. The chart and the carry card show one.
+                netAlternate = alternate
+                    ?.takeIf { net != null && abs(it - net) >= 1.0 }
+                    ?.let { signed(it) },
             )
         }
     }
@@ -212,6 +220,7 @@ private fun DayGrid(
     weight: String,
     header: Boolean = false,
     netColour: Color? = null,
+    netAlternate: String? = null,
 ) {
     val style = if (header) {
         MaterialTheme.typography.labelSmall
@@ -222,14 +231,23 @@ private fun DayGrid(
         Text(date ?: "", style = style, modifier = Modifier.weight(1.5f))
         Text(food, style = style, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
         Text(burn, style = style, modifier = Modifier.weight(1f), textAlign = TextAlign.End)
-        Text(
-            net,
-            style = style,
-            color = netColour ?: LocalContentColor.current,
-            fontWeight = if (netColour != null) FontWeight.Medium else null,
-            modifier = Modifier.weight(1.1f),
-            textAlign = TextAlign.End,
-        )
+        Column(modifier = Modifier.weight(1.2f), horizontalAlignment = Alignment.End) {
+            Text(
+                net,
+                style = style,
+                color = netColour ?: LocalContentColor.current,
+                fontWeight = if (netColour != null) FontWeight.Medium else null,
+                textAlign = TextAlign.End,
+            )
+            if (netAlternate != null) {
+                Text(
+                    netAlternate,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.End,
+                )
+            }
+        }
         Text(weight, style = style, modifier = Modifier.weight(0.9f), textAlign = TextAlign.End)
     }
 }
@@ -307,21 +325,15 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             readout = { index ->
                 val day = shown[index]
                 val net = nets[index]
-                val rawNet = day.netKcal
                 ChartReadout(
                     title = chartDate(day.date),
                     values = buildList {
                         add("Eaten" to (day.intakeKcal?.let { "${it.roundToInt()} kcal" } ?: "not logged"))
                         add("Burned" to (day.burnKcal?.let { "${it.roundToInt()} kcal" } ?: "not recorded"))
                         if (net != null) {
-                            // Both, when they differ: the figure in the day list and the
-                            // one the goal is actually judged against.
-                            if (rawNet != null && abs(net - rawNet) >= 1.0) {
-                                add("Net as logged" to "${signed(rawNet)} kcal")
-                                add("Net as counted" to "${signed(net)} kcal")
-                            } else {
-                                add("Net" to "${signed(net)} kcal")
-                            }
+                            // One figure, on whichever basis is selected. Both at once
+                            // was denser than it was informative.
+                            add("Net" to "${signed(net)} kcal")
                             if (target != 0.0) {
                                 val off = net - target
                                 val met = if (gaining) net >= target else net <= target
@@ -422,7 +434,7 @@ private fun NetChartCard(history: History, settings: AppSettings) {
  * working behind it.
  */
 @Composable
-private fun CarryCard(carry: BankedCarry, settings: AppSettings) {
+private fun CarryCard(carry: BankedCarry, settings: AppSettings, calibrated: Boolean) {
     SectionCard("Carried into today") {
         if (carry.days.isEmpty()) {
             Text(
@@ -432,20 +444,24 @@ private fun CarryCard(carry: BankedCarry, settings: AppSettings) {
             return@SectionCard
         }
 
-        StatRow("", "as logged → counted")
         carry.days.forEach { day ->
-            // Three numbers per day, because one cannot be checked against anything. The
-            // middle figure is the day after calibration; the last is after ageing and
-            // the per-day limit, and is what actually reaches the budget.
             StatRow(
                 label = DAY_LABEL.format(day.date),
-                value = "${signed(day.asLoggedKcal)} → ${signed(day.kcal)} kcal",
+                value = "${signed(if (calibrated) day.kcal else day.asLoggedContribution)} kcal",
             )
         }
         Spacer(Modifier.height(4.dp))
         HorizontalDivider()
         Spacer(Modifier.height(4.dp))
-        StatRow("Carried into today", "${signed(carry.totalKcal)} kcal")
+        // The total matches the column above it on whichever basis is shown, and the
+        // explainer names the figure the budget actually uses when they differ.
+        val shownTotal = if (calibrated) {
+            carry.totalKcal
+        } else {
+            carry.days.sumOf { it.asLoggedContribution }
+                .coerceIn(-HistoryRepository.MAX_BANKED_KCAL, HistoryRepository.MAX_BANKED_KCAL)
+        }
+        StatRow("Carried into today", "${signed(shownTotal)} kcal")
         Spacer(Modifier.height(8.dp))
         Explainer(
             buildString {

@@ -44,6 +44,8 @@ import kotlin.math.roundToInt
 fun SettingsScaffold(
     title: String,
     onBack: () -> Unit,
+    /** Sits in the bar, so it stays reachable however far the screen has been scrolled. */
+    actions: @Composable androidx.compose.foundation.layout.RowScope.() -> Unit = {},
     content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit,
 ) {
     Scaffold(
@@ -51,6 +53,7 @@ fun SettingsScaffold(
             TopAppBar(
                 title = { Text(title) },
                 navigationIcon = { TextButton(onClick = onBack) { Text("Back") } },
+                actions = actions,
             )
         },
     ) { padding ->

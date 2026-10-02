@@ -90,6 +90,19 @@ data class CarryDay(
 
     /** What this day contributes to today's carry, after clipping and ageing. */
     val kcal: Double get() = clippedKcal * weight
+
+    /**
+     * The same contribution worked out from the figures the apps reported.
+     *
+     * Clipped and aged exactly as [kcal] is, so that a column of these still sums to the
+     * total beneath it. Showing the unprocessed day here instead would be a column that
+     * does not add up, which is worse than showing nothing.
+     */
+    val asLoggedContribution: Double
+        get() = asLoggedKcal.coerceIn(
+            -HistoryRepository.MAX_DAY_CONTRIBUTION_KCAL,
+            HistoryRepository.MAX_DAY_CONTRIBUTION_KCAL,
+        ) * weight
 }
 
 /**
