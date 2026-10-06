@@ -9,7 +9,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
-import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
+import androidx.health.connect.client.request.AggregateGroupByDurationRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import nl.flwe.kcalwidget.data.DayWindow
@@ -18,9 +18,9 @@ import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.settings.BankingState
 import nl.flwe.kcalwidget.data.settings.HealthMetric
 import nl.flwe.kcalwidget.data.weight.WeightTrend
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.Period
 import java.time.temporal.ChronoUnit
 import kotlin.math.pow
 import java.time.ZoneId
@@ -403,18 +403,26 @@ class HistoryRepository(
             async {
                 withTimeoutOrNull(CHUNK_TIMEOUT_MS) {
                     runCatching {
-                        client.aggregateGroupByPeriod(
-                            AggregateGroupByPeriodRequest(
+                        // Duration buckets over an instant range. Period bucketing needs
+                        // a local-time range, and that is the form a record without a
+                        // recorded zone offset slips through.
+                        client.aggregateGroupByDuration(
+                            AggregateGroupByDurationRequest(
                                 setOf(metric),
-                                TimeRangeFilter.between(from, to),
-                                Period.ofDays(1),
+                                TimeRangeFilter.between(
+                                    DayWindow.instantOf(from),
+                                    DayWindow.instantOf(to),
+                                ),
+                                Duration.ofDays(1),
                                 origins,
                             )
                         ).mapNotNull { bucket ->
                             val kcal = bucket.result[metric]?.inKilocalories
                                 ?: return@mapNotNull null
-                            DayWindow.currentStart(dayStartHour, bucket.startTime)
-                                .toLocalDate() to kcal
+                            val local = LocalDateTime.ofInstant(
+                                bucket.startTime, java.time.ZoneId.systemDefault(),
+                            )
+                            DayWindow.currentStart(dayStartHour, local).toLocalDate() to kcal
                         }.toMap()
                     }.onFailure {
                         if (it is kotlinx.coroutines.CancellationException) throw it

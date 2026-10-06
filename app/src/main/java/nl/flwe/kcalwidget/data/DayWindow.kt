@@ -2,8 +2,10 @@ package nl.flwe.kcalwidget.data
 
 import androidx.health.connect.client.time.TimeRangeFilter
 import java.time.Duration
+import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneId
 
 /**
  * Where "today" starts and stops.
@@ -33,9 +35,21 @@ object DayWindow {
         return if (elapsed.isNegative) Duration.ZERO else elapsed.coerceAtMost(Duration.ofDays(1))
     }
 
-    /** Midnight-to-now, in the configured frame. */
+    /**
+     * A local wall-clock time as the actual moment it refers to here.
+     *
+     * Every range handed to Health Connect goes through this. The LocalDateTime form of
+     * TimeRangeFilter matches against the local time a record carries, which is only the
+     * same thing as our wall clock when the writer recorded a zone offset -- and when it
+     * did not, a quick log at 00:22 local sits at 22:22Z and a 00:00-to-now local filter
+     * never sees it. Instants have no such ambiguity: a moment is a moment.
+     */
+    fun instantOf(local: LocalDateTime, zone: ZoneId = ZoneId.systemDefault()): Instant =
+        local.atZone(zone).toInstant()
+
+    /** Day-start-to-now, in the configured frame. */
     fun todayRange(dayStartHour: Int, now: LocalDateTime = LocalDateTime.now()): TimeRangeFilter =
-        TimeRangeFilter.between(currentStart(dayStartHour, now), now)
+        TimeRangeFilter.between(instantOf(currentStart(dayStartHour, now)), instantOf(now))
 
     /** The [days] complete logical days before the current one. */
     fun recentCompleteDays(
@@ -44,7 +58,10 @@ object DayWindow {
         now: LocalDateTime = LocalDateTime.now(),
     ): TimeRangeFilter {
         val end = currentStart(dayStartHour, now)
-        return TimeRangeFilter.between(end.minusDays(days.toLong()), end)
+        return TimeRangeFilter.between(
+            instantOf(end.minusDays(days.toLong())),
+            instantOf(end),
+        )
     }
 
     /**

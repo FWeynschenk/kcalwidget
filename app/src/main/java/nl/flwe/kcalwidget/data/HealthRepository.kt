@@ -13,7 +13,6 @@ import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.records.metadata.DataOrigin
 import androidx.health.connect.client.request.AggregateGroupByDurationRequest
-import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
 import androidx.health.connect.client.request.AggregateRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
@@ -25,7 +24,6 @@ import java.time.Instant
 import kotlinx.coroutines.CancellationException
 import java.time.LocalDate
 import java.time.LocalDateTime
-import java.time.Period
 import java.time.ZoneId
 
 /** Raw numbers straight out of Health Connect, before any modelling. */
@@ -123,7 +121,7 @@ class HealthRepository(private val context: Context) {
         val dayStart = DayWindow.currentStart(settings.calculation.dayStartHour, now)
         val today = DayWindow.todayRange(settings.calculation.dayStartHour, now)
 
-        val intake = aggregateOrNull(
+        val aggregated = aggregateOrNull(
             client,
             setOf(NutritionRecord.ENERGY_TOTAL),
             today,
@@ -132,13 +130,26 @@ class HealthRepository(private val context: Context) {
             "nutrition",
         )?.get(NutritionRecord.ENERGY_TOTAL)?.inKilocalories
 
+        // Cross-check by reading the records themselves.
+        //
+        // A nutrition entry logged at a single instant has a zero-length interval, and
+        // the aggregate can return nothing for a window that plainly contains it -- a
+        // 1286 kcal quick log at 00:22 was invisible to a 00:00-to-now aggregate while
+        // sitting in Health Connect for anyone to see. Reading the records and adding
+        // them up has no such hole, and for one day it costs nothing.
+        val intake = aggregated ?: nutritionByRecord(client, settings, today, errors)?.also {
+            errors += "nutrition aggregate returned nothing; summed the records instead"
+        }
         // Only worth asking when today has nothing: it answers "where did my dinner go"
         // in the hours after the boundary, and is pointless at any other time.
         val beforeBoundary = if (intake == null) {
             aggregateOrNull(
                 client,
                 setOf(NutritionRecord.ENERGY_TOTAL),
-                TimeRangeFilter.between(dayStart.minusHours(BOUNDARY_LOOKBACK_HOURS), dayStart),
+                TimeRangeFilter.between(
+                    DayWindow.instantOf(dayStart.minusHours(BOUNDARY_LOOKBACK_HOURS)),
+                    DayWindow.instantOf(dayStart),
+                ),
                 originsFor(settings, HealthMetric.NUTRITION),
             )?.get(NutritionRecord.ENERGY_TOTAL)?.inKilocalories
         } else {
@@ -219,11 +230,14 @@ class HealthRepository(private val context: Context) {
         val origins = originsFor(settings, HealthMetric.TOTAL_BURN)
 
         val dailyTotals = hcOrNull("baseline") {
-            client.aggregateGroupByPeriod(
-                AggregateGroupByPeriodRequest(
+            // By duration, not by Period: Period bucketing requires a local-time range,
+            // which is the form that cannot be trusted to match records reliably. Twenty
+            // four hours from the configured boundary is also what a "day" means here.
+            client.aggregateGroupByDuration(
+                AggregateGroupByDurationRequest(
                     setOf(TotalCaloriesBurnedRecord.ENERGY_TOTAL),
                     range,
-                    Period.ofDays(1),
+                    Duration.ofDays(1),
                     origins,
                 )
             ).mapNotNull { it.result[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories }
@@ -313,6 +327,33 @@ class HealthRepository(private val context: Context) {
         null
     }
 
+    /**
+     * Today's food, added up from the records rather than aggregated.
+     *
+     * Null only when nothing was readable at all, so that "no records" and "the read
+     * failed" stay distinguishable.
+     */
+    private suspend fun nutritionByRecord(
+        client: HealthConnectClient,
+        settings: AppSettings,
+        range: TimeRangeFilter,
+        errors: MutableList<String>,
+    ): Double? = try {
+        val records = client.readRecords(
+            ReadRecordsRequest(
+                NutritionRecord::class,
+                timeRangeFilter = range,
+                dataOriginFilter = originsFor(settings, HealthMetric.NUTRITION),
+            )
+        ).records
+        if (records.isEmpty()) null else records.sumOf { it.energy?.inKilocalories ?: 0.0 }
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        errors += "nutrition records read failed: ${e.javaClass.simpleName}: ${e.message}"
+        null
+    }
+
     /** Latest weight and when it was recorded, for BMR, BMI and the weigh-in reminder. */
     private suspend fun latestWeighIn(
         client: HealthConnectClient,
@@ -322,8 +363,8 @@ class HealthRepository(private val context: Context) {
             ReadRecordsRequest(
                 WeightRecord::class,
                 timeRangeFilter = TimeRangeFilter.between(
-                    LocalDate.now().minusDays(365).atStartOfDay(),
-                    LocalDateTime.now(),
+                    DayWindow.instantOf(LocalDate.now().minusDays(365).atStartOfDay()),
+                    DayWindow.instantOf(LocalDateTime.now()),
                 ),
                 dataOriginFilter = originsFor(settings, HealthMetric.WEIGHT),
                 ascendingOrder = false,

@@ -11,14 +11,14 @@ import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.StepsRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
-import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
+import androidx.health.connect.client.request.AggregateGroupByDurationRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import nl.flwe.kcalwidget.data.HealthRepository
 import nl.flwe.kcalwidget.data.hcOrNull
 import nl.flwe.kcalwidget.data.settings.HealthMetric
 import java.time.LocalDate
+import java.time.Duration
 import java.time.LocalDateTime
-import java.time.Period
 
 /** One app that writes a metric, with enough context to choose between them. */
 data class SourceOption(
@@ -105,8 +105,8 @@ class SourceDiscovery(
         metric: HealthMetric,
         range: TimeRangeFilter,
     ): Map<String, Int> = hcOrNull("sources for ${metric.name}") {
-        client.aggregateGroupByPeriod(
-            AggregateGroupByPeriodRequest(setOf(aggregateFor(metric)), range, Period.ofDays(1))
+        client.aggregateGroupByDuration(
+            AggregateGroupByDurationRequest(setOf(aggregateFor(metric)), range, Duration.ofDays(1))
         ).flatMap { bucket -> bucket.result.dataOrigins.map { it.packageName } }
             .groupingBy { it }
             .eachCount()
