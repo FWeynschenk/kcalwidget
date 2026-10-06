@@ -14,6 +14,7 @@ import androidx.health.connect.client.records.WeightRecord
 import androidx.health.connect.client.request.AggregateGroupByPeriodRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import nl.flwe.kcalwidget.data.HealthRepository
+import nl.flwe.kcalwidget.data.hcOrNull
 import nl.flwe.kcalwidget.data.settings.HealthMetric
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -103,13 +104,13 @@ class SourceDiscovery(
         client: androidx.health.connect.client.HealthConnectClient,
         metric: HealthMetric,
         range: TimeRangeFilter,
-    ): Map<String, Int> = runCatching {
+    ): Map<String, Int> = hcOrNull("sources for ${metric.name}") {
         client.aggregateGroupByPeriod(
             AggregateGroupByPeriodRequest(setOf(aggregateFor(metric)), range, Period.ofDays(1))
         ).flatMap { bucket -> bucket.result.dataOrigins.map { it.packageName } }
             .groupingBy { it }
             .eachCount()
-    }.getOrNull().orEmpty()
+    }.orEmpty()
 
     private fun labelFor(pm: android.content.pm.PackageManager, packageName: String): String =
         runCatching {

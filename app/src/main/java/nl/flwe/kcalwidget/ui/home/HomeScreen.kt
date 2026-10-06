@@ -48,6 +48,8 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Below this, a calibrated figure and the logged one are the same number to a reader. */
+private val WINDOW_TIME = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
+
 private const val MIN_VISIBLE_ADJUSTMENT_KCAL = 10.0
 
 private val GOOD = Color(0xFF1B5E20)
@@ -351,9 +353,39 @@ private fun TodayCard(energy: DayEnergy?) {
                     "is being used instead. Today's deficit is smaller than the goal asks for."
             )
         }
+        if (energy.readErrors.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Explainer(
+                "A read came back with an error, so a figure above may be missing rather " +
+                    "than zero: ${energy.readErrors.joinToString("; ")}"
+            )
+        }
         if (!energy.hasNutritionData) {
             Spacer(Modifier.height(8.dp))
-            Explainer("No nutrition written to Health Connect today, so intake reads as zero.")
+            Explainer(
+                buildString {
+                    append("No food logged in this window")
+                    val from = energy.windowStart
+                    val to = energy.windowEnd
+                    if (from != null && to != null) {
+                        append(" (${WINDOW_TIME.format(from)} to ${WINDOW_TIME.format(to)})")
+                    }
+                    append(", so intake reads as zero. ")
+                    val before = energy.intakeBeforeBoundaryKcal
+                    if (before != null && before > 1.0) {
+                        // The just-after-midnight case: the day is minutes old and the
+                        // evening's food now belongs to yesterday. Correct, and baffling
+                        // unless it is said.
+                        append("You logged ${before.roundToInt()} kcal in the hours before ")
+                        append("the day rolled over, which counts towards yesterday. ")
+                        append("A later day start, under Calculation, moves the boundary ")
+                        append("past your evening.")
+                    } else {
+                        append("Anything logged against an earlier time counts towards ")
+                        append("that day, not this one.")
+                    }
+                }
+            )
         }
     }
 }

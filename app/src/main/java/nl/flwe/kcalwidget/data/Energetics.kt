@@ -4,6 +4,7 @@ import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.settings.BodyProfile
 import nl.flwe.kcalwidget.data.settings.Sex
 import java.time.Duration
+import java.time.LocalDateTime
 import nl.flwe.kcalwidget.data.history.CarryState
 import nl.flwe.kcalwidget.data.history.ResolvedCarry
 import java.time.Instant
@@ -88,6 +89,13 @@ data class DayEnergy(
     val daysSinceWeighIn: Int?,
     val source: BurnSource,
     val hasNutritionData: Boolean,
+    /** The window today's figures were read over, for saying so when they look wrong. */
+    val windowStart: LocalDateTime?,
+    val windowEnd: LocalDateTime?,
+    /** Food logged in the hours just before the boundary, when today has none. */
+    val intakeBeforeBoundaryKcal: Double?,
+    /** Why a read came back empty. Empty means nothing failed. */
+    val readErrors: List<String>,
     val updatedAt: Instant,
 ) {
     /** True when banking contributed, from a fresh or a remembered carry. */
@@ -293,6 +301,10 @@ object Energetics {
                 ?.let { Duration.between(it, now).toDays().toInt().coerceAtLeast(0) },
             source = source,
             hasNutritionData = snapshot.intakeKcal != null,
+            windowStart = snapshot.windowStart,
+            windowEnd = snapshot.windowEnd,
+            intakeBeforeBoundaryKcal = snapshot.intakeBeforeBoundaryKcal,
+            readErrors = snapshot.errors,
             updatedAt = now,
         )
     }

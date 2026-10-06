@@ -22,6 +22,7 @@ import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.settings.HealthMetric
 import java.time.Duration
 import java.time.Instant
+import kotlinx.coroutines.CancellationException
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.Period
@@ -37,7 +38,48 @@ data class HealthSnapshot(
     val weightKg: Double?,
     val lastWeighInAt: Instant?,
     val burnOrigins: Set<String>,
+    /** The window the figures above were read over. */
+    val windowStart: LocalDateTime? = null,
+    val windowEnd: LocalDateTime? = null,
+    /**
+     * Food logged in the hours immediately before the day boundary.
+     *
+     * Just after midnight the day is minutes old and everything eaten that evening now
+     * belongs to yesterday. That is correct and deeply confusing, so the app can say it
+     * out loud instead of reporting nothing and leaving the user to wonder whether the
+     * read failed.
+     */
+    val intakeBeforeBoundaryKcal: Double? = null,
+    /**
+     * Why a read came back empty, when it came back empty for a reason. Empty list means
+     * nothing failed; a missing figure with no error here really is missing data.
+     */
+    val errors: List<String> = emptyList(),
 )
+
+/** How long before the day boundary to look when today has no food logged yet. */
+private const val BOUNDARY_LOOKBACK_HOURS = 8L
+
+/**
+ * Runs a Health Connect call, returning null on failure but never quietly.
+ *
+ * Two things `runCatching { }.getOrNull()` gets wrong and this does not. It swallows
+ * CancellationException, so a `withTimeoutOrNull` around the call looks like a provider
+ * that returned nothing -- which is how a burn aggregate timed out for weeks without
+ * anyone being able to tell. And it leaves no trace at all, so the only evidence that
+ * anything went wrong is a number that reads zero.
+ *
+ * Callers that can show the user what failed should collect the error instead; this is
+ * for the places where null is genuinely handled and a log is the right record.
+ */
+internal inline fun <T> hcOrNull(label: String, block: () -> T): T? = try {
+    block()
+} catch (e: kotlinx.coroutines.CancellationException) {
+    throw e
+} catch (e: Exception) {
+    android.util.Log.w("KcalHealth", "$label read failed", e)
+    null
+}
 
 enum class HealthAvailability { AVAILABLE, UPDATE_REQUIRED, UNSUPPORTED }
 
@@ -51,7 +93,7 @@ class HealthRepository(private val context: Context) {
 
     fun clientOrNull(): HealthConnectClient? =
         if (availability() == HealthAvailability.AVAILABLE) {
-            runCatching { HealthConnectClient.getOrCreate(context) }.getOrNull()
+            hcOrNull("client") { HealthConnectClient.getOrCreate(context) }
         } else {
             null
         }
@@ -76,14 +118,32 @@ class HealthRepository(private val context: Context) {
      */
     suspend fun readToday(settings: AppSettings): HealthSnapshot? {
         val client = clientOrNull() ?: return null
-        val today = DayWindow.todayRange(settings.calculation.dayStartHour)
+        val errors = mutableListOf<String>()
+        val now = LocalDateTime.now()
+        val dayStart = DayWindow.currentStart(settings.calculation.dayStartHour, now)
+        val today = DayWindow.todayRange(settings.calculation.dayStartHour, now)
 
         val intake = aggregateOrNull(
             client,
             setOf(NutritionRecord.ENERGY_TOTAL),
             today,
             originsFor(settings, HealthMetric.NUTRITION),
+            errors,
+            "nutrition",
         )?.get(NutritionRecord.ENERGY_TOTAL)?.inKilocalories
+
+        // Only worth asking when today has nothing: it answers "where did my dinner go"
+        // in the hours after the boundary, and is pointless at any other time.
+        val beforeBoundary = if (intake == null) {
+            aggregateOrNull(
+                client,
+                setOf(NutritionRecord.ENERGY_TOTAL),
+                TimeRangeFilter.between(dayStart.minusHours(BOUNDARY_LOOKBACK_HOURS), dayStart),
+                originsFor(settings, HealthMetric.NUTRITION),
+            )?.get(NutritionRecord.ENERGY_TOTAL)?.inKilocalories
+        } else {
+            null
+        }
 
         val totalResult = aggregateOrNull(
             client,
@@ -123,6 +183,10 @@ class HealthRepository(private val context: Context) {
                 totalResult?.dataOrigins?.forEach { add(it.packageName) }
                 activeResult?.dataOrigins?.forEach { add(it.packageName) }
             },
+            windowStart = dayStart,
+            windowEnd = now,
+            intakeBeforeBoundaryKcal = beforeBoundary,
+            errors = errors,
         )
     }
 
@@ -154,7 +218,7 @@ class HealthRepository(private val context: Context) {
         val range = DayWindow.recentCompleteDays(TdeeBaseline.WINDOW_DAYS, dayStartHour)
         val origins = originsFor(settings, HealthMetric.TOTAL_BURN)
 
-        val dailyTotals = runCatching {
+        val dailyTotals = hcOrNull("baseline") {
             client.aggregateGroupByPeriod(
                 AggregateGroupByPeriodRequest(
                     setOf(TotalCaloriesBurnedRecord.ENERGY_TOTAL),
@@ -163,7 +227,7 @@ class HealthRepository(private val context: Context) {
                     origins,
                 )
             ).mapNotNull { it.result[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories }
-        }.getOrNull().orEmpty()
+        }.orEmpty()
 
         val plausible = dailyTotals.filter { it >= bmrPerDayKcal * MIN_PLAUSIBLE_DAY_FACTOR }
         if (plausible.size < TdeeBaseline.MIN_SAMPLE_DAYS) return null
@@ -237,9 +301,17 @@ class HealthRepository(private val context: Context) {
         metrics: Set<AggregateMetric<*>>,
         range: TimeRangeFilter,
         origins: Set<DataOrigin> = emptySet(),
-    ): AggregationResult? = runCatching {
+        /** Appended to when the read throws, so a failure is not read as an empty day. */
+        errors: MutableList<String>? = null,
+        label: String? = null,
+    ): AggregationResult? = try {
         client.aggregate(AggregateRequest(metrics, range, origins))
-    }.getOrNull()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        errors?.add("${label ?: "read"} failed: ${e.javaClass.simpleName}: ${e.message}")
+        null
+    }
 
     /** Latest weight and when it was recorded, for BMR, BMI and the weigh-in reminder. */
     private suspend fun latestWeighIn(
