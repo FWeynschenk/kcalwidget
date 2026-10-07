@@ -47,6 +47,7 @@ class SettingsRepository(private val context: Context) {
                 targetWeightKg = this[Keys.TARGET_WEIGHT],
                 useWeeklyBanking = this[Keys.WEEKLY_BANKING] ?: d.goal.useWeeklyBanking,
                 minIntakeFloorKcal = this[Keys.MIN_INTAKE] ?: d.goal.minIntakeFloorKcal,
+                onTargetBandKcal = this[Keys.ON_TARGET_BAND] ?: d.goal.onTargetBandKcal,
                 goalAchievedAt = this[Keys.GOAL_ACHIEVED_AT],
             ),
             sources = SourceSettings(selections = readSources()),
@@ -110,6 +111,7 @@ class SettingsRepository(private val context: Context) {
         s.banking.lastCarryKcal?.let { this[Keys.LAST_CARRY_KCAL] = it }
         s.banking.lastCarryDay?.let { this[Keys.LAST_CARRY_DAY] = it }
         this[Keys.MIN_INTAKE] = s.goal.minIntakeFloorKcal
+        this[Keys.ON_TARGET_BAND] = s.goal.onTargetBandKcal
         s.goal.goalAchievedAt.let { if (it == null) remove(Keys.GOAL_ACHIEVED_AT) else this[Keys.GOAL_ACHIEVED_AT] = it }
 
         HealthMetric.entries.forEach { metric ->
@@ -153,6 +155,7 @@ class SettingsRepository(private val context: Context) {
         val LAST_CARRY_KCAL = doublePreferencesKey("last_carry_kcal")
         val LAST_CARRY_DAY = longPreferencesKey("last_carry_day")
         val MIN_INTAKE = intPreferencesKey("min_intake_kcal")
+        val ON_TARGET_BAND = intPreferencesKey("on_target_band")
         val GOAL_ACHIEVED_AT = longPreferencesKey("goal_achieved_at")
 
         val PREFER_HC_TOTAL = booleanPreferencesKey("prefer_hc_total")

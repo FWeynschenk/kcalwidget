@@ -14,6 +14,7 @@ import nl.flwe.kcalwidget.data.BurnSource
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 import java.util.Locale
 
 /** What the widget should say when it cannot show numbers. */
@@ -39,6 +40,7 @@ object WidgetKeys {
     val DAYS_SINCE_WEIGH_IN = intPreferencesKey("days_since_weigh_in")
     val WEIGH_IN_DUE = booleanPreferencesKey("weigh_in_due")
     val GOAL_DELTA = doublePreferencesKey("goal_delta")
+    val ON_TARGET_BAND = intPreferencesKey("on_target_band")
     val WEEKLY_SPARE = doublePreferencesKey("weekly_spare")
     val NET_SERIES = stringPreferencesKey("net_series")
     val WEIGHT_SERIES = stringPreferencesKey("weight_series")
@@ -77,6 +79,8 @@ internal data class WidgetModel(
     val weighInDue: Boolean,
     /** The goal's daily allowance, so the trend chart can draw the line it is judged against. */
     val goalDeltaKcal: Double,
+    /** Inside this much of the budget the widget says on target rather than over or under. */
+    val onTargetBandKcal: Int,
     /** Room the week has that today's budget is deliberately not spending. */
     val weeklySpareKcal: Double,
     val netSeries: List<Double>,
@@ -90,10 +94,14 @@ internal data class WidgetModel(
 
     val accentPair: Pair<Color, Color>
         get() = when {
+            isOnTarget -> ON_TARGET
             remaining < 0 -> OVER
             budget > 0 && remaining < budget * 0.1 -> CLOSE
             else -> UNDER
         }
+
+    /** Near enough to the budget to count as hitting it, in either direction. */
+    val isOnTarget: Boolean get() = abs(remaining) <= onTargetBandKcal
 
     val progress: Float
         get() = if (budget <= 0) 1f else (intake / budget).toFloat().coerceIn(0f, 1f)
@@ -111,6 +119,7 @@ internal data class WidgetModel(
 internal val UNDER = Color(0xFF1B5E20) to Color(0xFF7CE0B6)
 internal val CLOSE = Color(0xFF8A5A00) to Color(0xFFF2B33D)
 internal val OVER = Color(0xFFB3261E) to Color(0xFFFFB4AB)
+internal val ON_TARGET = Color(0xFF00695C) to Color(0xFF7FD9CC)
 
 private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
 
@@ -147,6 +156,7 @@ internal fun Preferences.toWidgetModel(): WidgetModel = WidgetModel(
     daysSinceWeighIn = this[WidgetKeys.DAYS_SINCE_WEIGH_IN],
     weighInDue = this[WidgetKeys.WEIGH_IN_DUE] ?: false,
     goalDeltaKcal = this[WidgetKeys.GOAL_DELTA] ?: 0.0,
+    onTargetBandKcal = this[WidgetKeys.ON_TARGET_BAND] ?: 0,
     weeklySpareKcal = this[WidgetKeys.WEEKLY_SPARE] ?: 0.0,
     netSeries = this[WidgetKeys.NET_SERIES].toSeries(),
     weightSeries = this[WidgetKeys.WEIGHT_SERIES].toSeries(),

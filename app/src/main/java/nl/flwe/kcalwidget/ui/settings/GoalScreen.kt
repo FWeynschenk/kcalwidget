@@ -112,6 +112,27 @@ fun GoalScreen(viewModel: MainViewModel, onBack: () -> Unit) {
         }
 
         item {
+            SectionCard("Close enough") {
+                NumberField(
+                    label = "Count as on target within (kcal)",
+                    value = goal.onTargetBandKcal.toString(),
+                ) { text ->
+                    parseWholeNumber(text)?.takeIf { it in 0..500 }?.let { kcal ->
+                        viewModel.updateSettings {
+                            it.copy(goal = it.goal.copy(onTargetBandKcal = kcal))
+                        }
+                    }
+                }
+                Explainer(
+                    "Land this near your budget and the app says you are on target rather " +
+                        "than naming a shortfall or an excess. Your budget is an estimate " +
+                        "built on other estimates, so a few dozen kcal either way is not a " +
+                        "miss worth calling one. Set it to 0 to always be told the direction."
+                )
+            }
+        }
+
+        item {
             SectionCard("Minimum intake") {
                 NumberField("Never budget below (kcal)", goal.minIntakeFloorKcal.toString()) { text ->
                     parseWholeNumber(text)?.let { kcal ->

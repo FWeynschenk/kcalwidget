@@ -76,6 +76,14 @@ data class GoalSettings(
     val useWeeklyBanking: Boolean = false,
     /** The budget is never presented below this without saying so. */
     val minIntakeFloorKcal: Int = 1200,
+    /**
+     * How near the budget counts as hitting it.
+     *
+     * Inside this band the app says you are on target rather than naming a shortfall or
+     * an excess. Landing within fifty kcal of a figure that is itself an estimate is not
+     * a miss in either direction, and calling it one is both wrong and discouraging.
+     */
+    val onTargetBandKcal: Int = 50,
     /** When the target was last reached, so the celebration is shown once. */
     val goalAchievedAt: Long? = null,
 ) {

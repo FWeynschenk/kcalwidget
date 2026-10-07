@@ -128,6 +128,7 @@ object WidgetRepository {
                     prefs[WidgetKeys.HAS_NUTRITION] = energy.hasNutritionData
                     prefs[WidgetKeys.CALIBRATION_APPLIED] = energy.calibrationApplied
                     prefs[WidgetKeys.GOAL_DELTA] = energy.goalDeltaKcal
+                    prefs[WidgetKeys.ON_TARGET_BAND] = energy.onTargetBandKcal
                     prefs[WidgetKeys.WEEKLY_SPARE] = energy.weeklySpareKcal
                     prefs[WidgetKeys.WEIGHT_KG] = energy.weightKg
                     prefs[WidgetKeys.WEIGH_IN_DUE] = weighInDue(energy.daysSinceWeighIn, settings)

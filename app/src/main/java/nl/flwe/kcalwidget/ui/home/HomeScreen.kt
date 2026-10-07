@@ -52,6 +52,7 @@ private val WINDOW_TIME = java.time.format.DateTimeFormatter.ofPattern("HH:mm")
 
 private const val MIN_VISIBLE_ADJUSTMENT_KCAL = 10.0
 
+private val ON_TARGET = Color(0xFF00695C)
 private val GOOD = Color(0xFF1B5E20)
 private val BAD = Color(0xFFB3261E)
 
@@ -214,14 +215,32 @@ private fun TodayCard(energy: DayEnergy?) {
             return@SectionCard
         }
         val over = energy.remainingKcal < 0
+        val onTarget = energy.isOnTarget
         Text(
-            text = "${abs(energy.remainingKcal).roundToInt()} kcal",
+            text = if (onTarget) "On target" else "${abs(energy.remainingKcal).roundToInt()} kcal",
             style = MaterialTheme.typography.displaySmall,
             fontWeight = FontWeight.Bold,
-            color = if (over) BAD else GOOD,
+            color = when {
+                onTarget -> ON_TARGET
+                over -> BAD
+                else -> GOOD
+            },
         )
         Text(
-            text = if (over) "over budget" else "left to eat",
+            text = when {
+                // Inside the band the distance is still worth knowing; it is the verdict
+                // that is not. Naming a 12 kcal shortfall as being over budget is a
+                // judgement the arithmetic cannot support.
+                onTarget -> "within ${energy.onTargetBandKcal} kcal of your budget" +
+                    if (abs(energy.remainingKcal) >= 1) {
+                        ", ${abs(energy.remainingKcal).roundToInt()} to spare".takeIf { !over }
+                            ?: ", ${abs(energy.remainingKcal).roundToInt()} past it"
+                    } else {
+                        ""
+                    }
+                over -> "over budget"
+                else -> "left to eat"
+            },
             style = MaterialTheme.typography.bodyMedium,
         )
         Spacer(Modifier.height(12.dp))
@@ -230,7 +249,7 @@ private fun TodayCard(energy: DayEnergy?) {
             modifier = Modifier.fillMaxWidth(),
         )
         Spacer(Modifier.height(12.dp))
-        if (over) {
+        if (over && !onTarget) {
             Text(
                 text = "Burn ${energy.moveKcalToClear.roundToInt()} kcal to break even, " +
                     "about ${energy.walkMinutesToClear} min of brisk walking.",

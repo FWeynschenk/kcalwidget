@@ -57,7 +57,11 @@ internal fun WidgetHeader(model: WidgetModel, compact: Boolean, title: String? =
         verticalAlignment = Alignment.Vertical.CenterVertically,
     ) {
         Text(
-            text = title ?: if (model.isOver) "Over budget" else "Left today",
+            text = title ?: when {
+                model.isOnTarget -> "On target"
+                model.isOver -> "Over budget"
+                else -> "Left today"
+            },
             style = TextStyle(
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
@@ -88,6 +92,8 @@ internal fun Headline(model: WidgetModel, night: Boolean, fontSize: Int = 30) {
     val accent = model.accentPair.resolve(night)
     Row(verticalAlignment = Alignment.Vertical.Bottom) {
         Text(
+            // On target the number is the distance from the budget, which is still worth
+            // seeing; what goes is the verdict attached to it.
             text = abs(model.remaining).roundToInt().toString(),
             style = TextStyle(
                 fontSize = fontSize.sp,
@@ -97,7 +103,7 @@ internal fun Headline(model: WidgetModel, night: Boolean, fontSize: Int = 30) {
         )
         Spacer(GlanceModifier.size(4.dp))
         Text(
-            text = "kcal",
+            text = if (model.isOnTarget) "kcal off" else "kcal",
             style = TextStyle(fontSize = 13.sp, color = GlanceTheme.colors.onSurfaceVariant),
             modifier = GlanceModifier.padding(bottom = 3.dp),
         )

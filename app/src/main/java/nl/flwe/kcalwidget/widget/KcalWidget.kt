@@ -122,6 +122,8 @@ class KcalWidget : GlanceAppWidget() {
 }
 
 private fun advice(model: WidgetModel): String = when {
+    // No instruction to burn it off when the miss is inside the band it is allowed.
+    model.isOnTarget -> "Within ${model.onTargetBandKcal} kcal of your budget"
     model.isOver && model.walkMinutes > 0 ->
         "Move ${model.moveKcal.roundToInt()} kcal, about ${model.walkMinutes} min brisk walk"
 

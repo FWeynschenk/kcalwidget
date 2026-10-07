@@ -8,6 +8,7 @@ import java.time.LocalDateTime
 import nl.flwe.kcalwidget.data.history.CarryState
 import nl.flwe.kcalwidget.data.history.ResolvedCarry
 import java.time.Instant
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Where the burn figure came from, so the UI can be honest about its confidence. */
@@ -80,6 +81,8 @@ data class DayEnergy(
     val goalBudgetKcal: Double,
     /** Positive means there is room left to eat, negative means over budget. */
     val remainingKcal: Double,
+    /** Inside this much of the budget, the day counts as hit rather than missed. */
+    val onTargetBandKcal: Int,
     /** Active kcal that would bring an over-budget day back to zero. 0 when under. */
     val moveKcalToClear: Double,
     /** [moveKcalToClear] expressed as minutes of brisk walking. */
@@ -105,6 +108,15 @@ data class DayEnergy(
 
     /** True when the week has room today's budget is not spending. */
     val hasWeeklySpare: Boolean get() = weeklySpareKcal >= 1.0
+
+    /**
+     * True when the day has landed near enough to the budget to call it hit.
+     *
+     * Neither over nor under: the budget is an estimate built on other estimates, and
+     * reporting a fifty kcal miss as a miss reads as a verdict the numbers cannot
+     * support.
+     */
+    val isOnTarget: Boolean get() = abs(remainingKcal) <= onTargetBandKcal
 
     /** Fraction of the budget already eaten, clamped for progress bars. */
     val intakeFraction: Float
@@ -294,6 +306,7 @@ object Energetics {
             intakeFloorApplied = goalBudget < floor,
             goalBudgetKcal = goalBudget,
             remainingKcal = remaining,
+            onTargetBandKcal = settings.goal.onTargetBandKcal,
             moveKcalToClear = moveToClear,
             walkMinutesToClear = (moveToClear / walkKcalPerMinute(weightKg)).roundToInt(),
             weightKg = weightKg,
