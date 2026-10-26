@@ -177,3 +177,44 @@ class CalibratedVerdictTest {
         assertEquals(contribution.asLoggedKcal, contribution.rawKcal, 0.001)
     }
 }
+
+/**
+ * The net balance readout showed a calibrated net under raw food and burn figures, so the
+ * subtraction a reader does in their head came out different from the net printed below.
+ */
+class ReadoutArithmeticTest {
+
+    private val day = DayRow(LocalDate.of(2026, 10, 25), 1427.0, 2415.0, null)
+
+    private val calibrated = AppSettings(
+        features = nl.flwe.kcalwidget.data.settings.FeatureFlags(autoCalibration = true),
+        calibration = nl.flwe.kcalwidget.data.settings.CalibrationState(
+            expenditureFactor = 0.89,
+            intakeFactor = 1.05,
+        ),
+    )
+
+    @Test
+    fun `food minus burn is the net, on the calibrated basis`() {
+        val food = HistoryRepository.calibratedIntake(day, calibrated)!!
+        val burn = HistoryRepository.calibratedBurn(day, calibrated)!!
+        assertEquals(HistoryRepository.calibratedNet(day, calibrated)!!, food - burn, 0.0001)
+    }
+
+    @Test
+    fun `and on the as-logged basis`() {
+        val raw = calibrated.withoutCalibration()
+        val food = HistoryRepository.calibratedIntake(day, raw)!!
+        val burn = HistoryRepository.calibratedBurn(day, raw)!!
+        assertEquals(1427.0, food, 0.0001)
+        assertEquals(2415.0, burn, 0.0001)
+        assertEquals(HistoryRepository.calibratedNet(day, raw)!!, food - burn, 0.0001)
+    }
+
+    @Test
+    fun `a missing half leaves the net missing, not half a subtraction`() {
+        val noFood = DayRow(day.date, null, 2415.0, null)
+        assertEquals(null, HistoryRepository.calibratedIntake(noFood, calibrated))
+        assertEquals(null, HistoryRepository.calibratedNet(noFood, calibrated))
+    }
+}

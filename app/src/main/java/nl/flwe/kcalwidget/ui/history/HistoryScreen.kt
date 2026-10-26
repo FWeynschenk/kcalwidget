@@ -194,10 +194,10 @@ private fun DaysCard(rows: List<DayRow>, settings: AppSettings, calibrated: Bool
             val alternate = HistoryRepository.calibratedNet(row, other)
             DayGrid(
                 date = DAY_LABEL.format(row.date),
-                food = row.intakeKcal
-                    ?.let { (it * intakeFactor(shown)).roundToInt().toString() } ?: "—",
-                burn = row.burnKcal
-                    ?.let { (it * burnFactor(shown)).roundToInt().toString() } ?: "—",
+                food = HistoryRepository.calibratedIntake(row, shown)
+                    ?.roundToInt()?.toString() ?: "—",
+                burn = HistoryRepository.calibratedBurn(row, shown)
+                    ?.roundToInt()?.toString() ?: "—",
                 net = net?.let { signed(it) } ?: "—",
                 weight = row.weightKg?.let { "%.1f".format(it) } ?: "",
                 netColour = net?.let { if (it > 0) OVER else UNDER },
@@ -281,9 +281,9 @@ private fun SummaryCard(history: History, settings: AppSettings) {
 private fun NetChartCard(history: History, settings: AppSettings) {
     var range by remember { mutableStateOf(ChartRange.MONTH) }
     val shown = history.rows.takeLast(range.days)
-    // Corrected, so a green bar and a positive line in the carry card mean the same
-    // thing. The day list below stays raw, because that is a record of what the apps
-    // said rather than a verdict on it.
+    // On whichever basis the screen is showing, which is calibrated unless the user has
+    // switched; calibrated, a green bar and a positive line in the carry card mean the
+    // same thing.
     val nets = shown.map { HistoryRepository.calibratedNet(it, settings) }
     val target = settings.goal.dailyEnergyDelta
     // Gaining means clearing the line; every other goal means staying under it.
@@ -328,8 +328,20 @@ private fun NetChartCard(history: History, settings: AppSettings) {
                 ChartReadout(
                     title = chartDate(day.date),
                     values = buildList {
-                        add("Eaten" to (day.intakeKcal?.let { "${it.roundToInt()} kcal" } ?: "not logged"))
-                        add("Burned" to (day.burnKcal?.let { "${it.roundToInt()} kcal" } ?: "not recorded"))
+                        // Same basis as the net below, or the subtraction on screen does
+                        // not come out to the figure it is supposed to explain.
+                        add(
+                            "Eaten" to (
+                                HistoryRepository.calibratedIntake(day, settings)
+                                    ?.let { "${it.roundToInt()} kcal" } ?: "not logged"
+                                ),
+                        )
+                        add(
+                            "Burned" to (
+                                HistoryRepository.calibratedBurn(day, settings)
+                                    ?.let { "${it.roundToInt()} kcal" } ?: "not recorded"
+                                ),
+                        )
                         if (net != null) {
                             // One figure, on whichever basis is selected. Both at once
                             // was denser than it was informative.
@@ -400,10 +412,9 @@ private fun NetChartCard(history: History, settings: AppSettings) {
             )
             Spacer(Modifier.height(4.dp))
             Explainer(
-                "Drag across the chart to read any day. Bars use your calibrated figures, " +
-                    "the same ones the budget and the weekly carry use, so a green bar " +
-                    "always means that day left something over. The raw numbers your apps " +
-                    "recorded are in the day list further down and can differ. " +
+                "Drag across the chart to read any day. Figures follow the button at the " +
+                    "top; calibrated, they are the ones the budget and the weekly carry use, " +
+                    "so a green bar always means that day left something over. " +
                     "The dashed line is what your goal asks for each day: " +
                     "${target.roundToInt()} kcal. " +
                     if (gaining) {
@@ -455,6 +466,11 @@ private fun CarryCard(carry: BankedCarry, settings: AppSettings, calibrated: Boo
         Spacer(Modifier.height(4.dp))
         // The total matches the column above it on whichever basis is shown, and the
         // explainer names the figure the budget actually uses when they differ.
+        val shownRaw = if (calibrated) {
+            carry.rawTotalKcal
+        } else {
+            carry.days.sumOf { it.asLoggedContribution }
+        }
         val shownTotal = if (calibrated) {
             carry.totalKcal
         } else {
@@ -466,37 +482,40 @@ private fun CarryCard(carry: BankedCarry, settings: AppSettings, calibrated: Boo
         Explainer(
             buildString {
                 append("Each day is its burn plus your goal, minus what you ate, so a ")
-                append("positive day left something over. The first figure uses the numbers ")
-                append("your apps reported; the second is what the day actually contributes, ")
-                append("after calibration")
-                if (settings.features.autoCalibration) {
-                    append(" (burn counted at ${"%.2f".format(settings.calibration.expenditureFactor)}")
-                    append(" and intake at ${"%.2f".format(settings.calibration.intakeFactor)}")
-                    append(" of what was recorded)")
+                append("positive day left something over. ")
+                if (calibrated) {
+                    append("These are your calibrated figures")
+                    if (settings.features.autoCalibration) {
+                        append(" (burn counted at ")
+                        append("%.2f".format(settings.calibration.expenditureFactor))
+                        append(" and food at ")
+                        append("%.2f".format(settings.calibration.intakeFactor))
+                        append(" of what was recorded)")
+                    }
+                    append(", which is what your budget is worked out from. ")
+                } else {
+                    append("These are worked out from exactly what your apps recorded. Your ")
+                    append("budget uses the calibrated figures instead, so it carries ")
+                    append("${signed(carry.totalKcal)} kcal, not the total shown here. ")
                 }
-                append(", after older days are faded out, and after the per-day limit of ")
+                append("Older days are faded out, and no day counts for more than ")
                 append("${HistoryRepository.MAX_DAY_CONTRIBUTION_KCAL.roundToInt()} kcal. ")
-                append("A negative total tightens today's ")
-                append("budget; a positive one is reported as spare rather than spent, so a ")
-                append("good week does not quietly raise the bar on the next day. They add ")
-                append("up to ${signed(carry.rawTotalKcal)} kcal")
-                if (carry.capped) {
+                append("A negative total tightens today's budget; a positive one is ")
+                append("reported as spare rather than spent, so a good week does not quietly ")
+                append("raise the bar on the next day. ")
+                // The total named here has to be the one above it, on whichever basis is
+                // showing, or the explanation contradicts the figure it is explaining.
+                append("The days add up to ${signed(shownRaw)} kcal")
+                if (abs(shownRaw - shownTotal) > 0.5) {
                     // Without the sign this reads as a cap of +700 on a negative carry.
-                    append(", capped to ${signed(carry.totalKcal)} ")
+                    append(", capped to ${signed(shownTotal)} ")
                     append("so one heavy week cannot swallow today")
                 }
-                append(". Calibration is applied here, so these figures can differ from ")
-                append("the raw ones in the day list below.")
+                append(".")
             }
         )
     }
 }
-
-private fun burnFactor(settings: AppSettings) =
-    if (settings.features.autoCalibration) settings.calibration.expenditureFactor else 1.0
-
-private fun intakeFactor(settings: AppSettings) =
-    if (settings.features.autoCalibration) settings.calibration.intakeFactor else 1.0
 
 private fun signed(value: Double, decimals: Int = 0): String {
     val sign = if (value >= 0) "+" else ""

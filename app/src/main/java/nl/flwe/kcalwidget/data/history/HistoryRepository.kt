@@ -477,13 +477,24 @@ class HistoryRepository(
          * 271 kcal off the next.
          */
         fun calibratedNet(row: DayRow, settings: AppSettings): Double? {
-            val intake = row.intakeKcal ?: return null
-            val burn = row.burnKcal ?: return null
-            val calibrating = settings.features.autoCalibration
-            val burnFactor = if (calibrating) settings.calibration.expenditureFactor else 1.0
-            val intakeFactor = if (calibrating) settings.calibration.intakeFactor else 1.0
-            return intake * intakeFactor - burn * burnFactor
+            val intake = calibratedIntake(row, settings) ?: return null
+            val burn = calibratedBurn(row, settings) ?: return null
+            return intake - burn
         }
+
+        /**
+         * A day's food on the same footing as [calibratedNet].
+         *
+         * Every screen that prints food and burn beside a net goes through this pair, so
+         * the three always add up. The net balance readout once showed a calibrated net
+         * under raw food and burn figures, and the subtraction on screen did not match.
+         */
+        fun calibratedIntake(row: DayRow, settings: AppSettings): Double? =
+            row.intakeKcal?.let { it * if (settings.features.autoCalibration) settings.calibration.intakeFactor else 1.0 }
+
+        /** A day's burn on the same footing as [calibratedNet]. */
+        fun calibratedBurn(row: DayRow, settings: AppSettings): Double? =
+            row.burnKcal?.let { it * if (settings.features.autoCalibration) settings.calibration.expenditureFactor else 1.0 }
 
         /** The carry as a single number, which is all the budget needs. */
         internal fun bankedAdjustment(rows: List<DayRow>, settings: AppSettings): Double =
