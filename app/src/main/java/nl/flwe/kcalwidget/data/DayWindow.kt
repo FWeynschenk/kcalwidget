@@ -65,6 +65,66 @@ object DayWindow {
     }
 
     /**
+     * Consecutive logical days that can be read as one run of 24-hour buckets.
+     *
+     * A day is not always 24 hours. The one the clocks go back on is 25, the one they go
+     * forward on 23, and a run of fixed 24-hour buckets laid across either drifts an hour
+     * off the real boundaries from then on. The night the clocks went back, that drift put
+     * a one-hour stub where a whole day should have been: 72 kcal for a full Sunday.
+     */
+    data class Span(val firstDay: LocalDate, val days: Int, val start: Instant, val end: Instant) {
+        /** True when every day in it is exactly 24 hours, so duration buckets line up. */
+        val uniform: Boolean get() = Duration.between(start, end) == Duration.ofDays(days.toLong())
+
+        fun dayAt(bucketStart: Instant): LocalDate =
+            firstDay.plusDays(Duration.between(start, bucketStart).toDays())
+    }
+
+    /**
+     * Splits [days] logical days from [firstDay] into [Span]s. Each 24-hour stretch is one
+     * span; a day the clock changes on stands alone, to be read with its own start and end.
+     */
+    fun spans(
+        firstDay: LocalDate,
+        days: Int,
+        dayStartHour: Int,
+        zone: ZoneId = ZoneId.systemDefault(),
+    ): List<Span> {
+        val result = mutableListOf<Span>()
+        var runStart = firstDay
+        var runDays = 0
+        fun close() {
+            if (runDays == 0) return
+            result += Span(
+                runStart, runDays,
+                instantOf(startOf(runStart, dayStartHour), zone),
+                instantOf(startOf(runStart.plusDays(runDays.toLong()), dayStartHour), zone),
+            )
+        }
+        for (i in 0 until days) {
+            val day = firstDay.plusDays(i.toLong())
+            val length = Duration.between(
+                instantOf(startOf(day, dayStartHour), zone),
+                instantOf(startOf(day.plusDays(1), dayStartHour), zone),
+            )
+            if (length == Duration.ofDays(1)) {
+                if (runDays == 0) runStart = day
+                runDays++
+            } else {
+                close()
+                runDays = 0
+                result += Span(
+                    day, 1,
+                    instantOf(startOf(day, dayStartHour), zone),
+                    instantOf(startOf(day.plusDays(1), dayStartHour), zone),
+                )
+            }
+        }
+        close()
+        return result
+    }
+
+    /**
      * Hours since the logical day started, which is the frame the learned intraday curve
      * is indexed in. Always 0..24 regardless of where the boundary sits.
      */

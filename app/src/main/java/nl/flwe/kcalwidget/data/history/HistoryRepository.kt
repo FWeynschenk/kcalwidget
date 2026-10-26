@@ -9,7 +9,6 @@ import kotlinx.coroutines.withTimeoutOrNull
 import androidx.health.connect.client.records.NutritionRecord
 import androidx.health.connect.client.records.TotalCaloriesBurnedRecord
 import androidx.health.connect.client.records.WeightRecord
-import androidx.health.connect.client.request.AggregateGroupByDurationRequest
 import androidx.health.connect.client.request.ReadRecordsRequest
 import androidx.health.connect.client.time.TimeRangeFilter
 import nl.flwe.kcalwidget.data.DayWindow
@@ -18,7 +17,6 @@ import nl.flwe.kcalwidget.data.settings.AppSettings
 import nl.flwe.kcalwidget.data.settings.BankingState
 import nl.flwe.kcalwidget.data.settings.HealthMetric
 import nl.flwe.kcalwidget.data.weight.WeightTrend
-import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
@@ -355,8 +353,8 @@ class HistoryRepository(
                 ReadRecordsRequest(
                     WeightRecord::class,
                     timeRangeFilter = TimeRangeFilter.between(
-                        LocalDate.now().minusDays(days.toLong()).atStartOfDay(),
-                        java.time.LocalDateTime.now(),
+                        DayWindow.instantOf(LocalDate.now().minusDays(days.toLong()).atStartOfDay()),
+                        DayWindow.instantOf(LocalDateTime.now()),
                     ),
                     dataOriginFilter = health.originsFor(settings, HealthMetric.WEIGHT),
                     ascendingOrder = true,
@@ -391,39 +389,19 @@ class HistoryRepository(
         label: String,
         errors: MutableList<String>,
     ): Map<LocalDate, Double> = coroutineScope {
-        val chunks = mutableListOf<Pair<LocalDateTime, LocalDateTime>>()
-        var cursor = rangeStart
-        while (cursor.isBefore(rangeEnd)) {
-            val next = minOf(cursor.plusDays(CHUNK_DAYS.toLong()), rangeEnd)
-            chunks += cursor to next
-            cursor = next
+        // Chunked by logical day, not by hours: a chunk the clocks change in is still
+        // whole days, and HealthRepository.dailyTotals reads that day over its true length.
+        val firstDay = rangeStart.toLocalDate()
+        val totalDays = ChronoUnit.DAYS.between(firstDay, rangeEnd.toLocalDate()).toInt()
+        val chunks = (0 until totalDays step CHUNK_DAYS).map { offset ->
+            firstDay.plusDays(offset.toLong()) to minOf(CHUNK_DAYS, totalDays - offset)
         }
 
-        val results = chunks.map { (from, to) ->
+        val results = chunks.map { (from, days) ->
             async {
                 withTimeoutOrNull(CHUNK_TIMEOUT_MS) {
                     runCatching {
-                        // Duration buckets over an instant range. Period bucketing needs
-                        // a local-time range, and that is the form a record without a
-                        // recorded zone offset slips through.
-                        client.aggregateGroupByDuration(
-                            AggregateGroupByDurationRequest(
-                                setOf(metric),
-                                TimeRangeFilter.between(
-                                    DayWindow.instantOf(from),
-                                    DayWindow.instantOf(to),
-                                ),
-                                Duration.ofDays(1),
-                                origins,
-                            )
-                        ).mapNotNull { bucket ->
-                            val kcal = bucket.result[metric]?.inKilocalories
-                                ?: return@mapNotNull null
-                            val local = LocalDateTime.ofInstant(
-                                bucket.startTime, java.time.ZoneId.systemDefault(),
-                            )
-                            DayWindow.currentStart(dayStartHour, local).toLocalDate() to kcal
-                        }.toMap()
+                        health.dailyTotals(client, metric, from, days, dayStartHour, origins)
                     }.onFailure {
                         if (it is kotlinx.coroutines.CancellationException) throw it
                         Log.w("KcalHistory", "$label chunk failed", it)

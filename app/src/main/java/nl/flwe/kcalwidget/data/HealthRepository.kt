@@ -230,17 +230,17 @@ class HealthRepository(private val context: Context) {
         val origins = originsFor(settings, HealthMetric.TOTAL_BURN)
 
         val dailyTotals = hcOrNull("baseline") {
-            // By duration, not by Period: Period bucketing requires a local-time range,
-            // which is the form that cannot be trusted to match records reliably. Twenty
-            // four hours from the configured boundary is also what a "day" means here.
-            client.aggregateGroupByDuration(
-                AggregateGroupByDurationRequest(
-                    setOf(TotalCaloriesBurnedRecord.ENERGY_TOTAL),
-                    range,
-                    Duration.ofDays(1),
-                    origins,
-                )
-            ).mapNotNull { it.result[TotalCaloriesBurnedRecord.ENERGY_TOTAL]?.inKilocalories }
+            // By day boundaries, not by Period: Period bucketing requires a local-time
+            // range, which is the form that cannot be trusted to match records reliably.
+            dailyTotals(
+                client,
+                TotalCaloriesBurnedRecord.ENERGY_TOTAL,
+                DayWindow.currentStart(dayStartHour).toLocalDate()
+                    .minusDays(TdeeBaseline.WINDOW_DAYS.toLong()),
+                TdeeBaseline.WINDOW_DAYS,
+                dayStartHour,
+                origins,
+            ).values.toList()
         }.orEmpty()
 
         val plausible = dailyTotals.filter { it >= bmrPerDayKcal * MIN_PLAUSIBLE_DAY_FACTOR }
@@ -308,6 +308,40 @@ class HealthRepository(private val context: Context) {
         cumulative[24] = 1.0
         for (h in 1..24) cumulative[h] = maxOf(cumulative[h], cumulative[h - 1])
         return cumulative.toList()
+    }
+
+    /**
+     * One total per logical day, keyed by that day.
+     *
+     * Runs of 24-hour days are bucketed in one call each; a day the clocks change on is
+     * aggregated alone over its own true length. Throws on failure, as the callers each
+     * decide for themselves what a failed read costs.
+     */
+    suspend fun dailyTotals(
+        client: HealthConnectClient,
+        metric: AggregateMetric<androidx.health.connect.client.units.Energy>,
+        firstDay: LocalDate,
+        days: Int,
+        dayStartHour: Int,
+        origins: Set<DataOrigin>,
+    ): Map<LocalDate, Double> {
+        val totals = linkedMapOf<LocalDate, Double>()
+        for (span in DayWindow.spans(firstDay, days, dayStartHour)) {
+            val range = TimeRangeFilter.between(span.start, span.end)
+            if (span.uniform) {
+                client.aggregateGroupByDuration(
+                    AggregateGroupByDurationRequest(setOf(metric), range, Duration.ofDays(1), origins)
+                ).forEach { bucket ->
+                    val kcal = bucket.result[metric]?.inKilocalories ?: return@forEach
+                    totals[span.dayAt(bucket.startTime)] = kcal
+                }
+            } else {
+                client.aggregate(AggregateRequest(setOf(metric), range, origins))[metric]
+                    ?.inKilocalories
+                    ?.let { totals[span.firstDay] = it }
+            }
+        }
+        return totals
     }
 
     suspend fun aggregateOrNull(
